@@ -60,6 +60,11 @@ struct _virCHDomainObjPrivate {
     virChrdevsPtr devs;
 };
 
+#define CH_DOMAIN_PRIVATE(vm) \
+    ((virCHDomainObjPrivatePtr) (vm)->privateData)
+
+virCHMonitorPtr virCHDomainGetMonitor(virDomainObjPtr vm);
+
 extern virDomainXMLPrivateDataCallbacks virCHDriverPrivateDataCallbacks;
 extern virDomainDefParserConfig virCHDriverDomainDefParserConfig;
 

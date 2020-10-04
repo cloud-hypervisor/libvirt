@@ -217,3 +217,9 @@ virCHDomainDefPostParse(virDomainDefPtr def,
 virDomainDefParserConfig virCHDriverDomainDefParserConfig = {
     .domainPostParseCallback = virCHDomainDefPostParse,
 };
+
+virCHMonitorPtr
+virCHDomainGetMonitor(virDomainObjPtr vm)
+{
+    return CH_DOMAIN_PRIVATE(vm)->monitor;
+}
