@@ -189,11 +189,53 @@ virCHDomainObjPrivateXMLParse(xmlXPathContextPtr ctxt,
     return 0;
 }
 
+static virClassPtr virCHDomainVcpuPrivateClass;
+static void virCHDomainVcpuPrivateDispose(void *obj);
+
+static int
+virCHDomainVcpuPrivateOnceInit(void)
+{
+    if (!VIR_CLASS_NEW(virCHDomainVcpuPrivate, virClassForObject()))
+        return -1;
+
+    return 0;
+}
+
+VIR_ONCE_GLOBAL_INIT(virCHDomainVcpuPrivate);
+
+static virObjectPtr
+virCHDomainVcpuPrivateNew(void)
+{
+    virCHDomainVcpuPrivatePtr priv;
+
+    if (virCHDomainVcpuPrivateInitialize() < 0)
+        return NULL;
+
+    if (!(priv = virObjectNew(virCHDomainVcpuPrivateClass)))
+        return NULL;
+
+    return (virObjectPtr) priv;
+}
+
+
+static void
+virCHDomainVcpuPrivateDispose(void *obj)
+{
+    virCHDomainVcpuPrivatePtr priv = obj;
+
+    priv->tid = 0;
+
+    return;
+}
+
+
+
 virDomainXMLPrivateDataCallbacks virCHDriverPrivateDataCallbacks = {
     .alloc = virCHDomainObjPrivateAlloc,
     .free = virCHDomainObjPrivateFree,
     .format = virCHDomainObjPrivateXMLFormat,
     .parse  = virCHDomainObjPrivateXMLParse,
+    .vcpuNew = virCHDomainVcpuPrivateNew,
 };
 
 static int

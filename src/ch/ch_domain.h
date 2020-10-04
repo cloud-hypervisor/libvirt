@@ -65,6 +65,18 @@ struct _virCHDomainObjPrivate {
 
 virCHMonitorPtr virCHDomainGetMonitor(virDomainObjPtr vm);
 
+typedef struct _virCHDomainVcpuPrivate virCHDomainVcpuPrivate;
+typedef virCHDomainVcpuPrivate *virCHDomainVcpuPrivatePtr;
+struct _virCHDomainVcpuPrivate {
+    virObject parent;
+
+    pid_t tid; /* vcpu thread id */
+    virTristateBool halted;
+};
+
+#define CH_DOMAIN_VCPU_PRIVATE(vcpu) \
+    ((virCHDomainVcpuPrivatePtr) (vcpu)->privateData)
+
 extern virDomainXMLPrivateDataCallbacks virCHDriverPrivateDataCallbacks;
 extern virDomainDefParserConfig virCHDriverDomainDefParserConfig;
 
