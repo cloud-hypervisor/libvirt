@@ -996,6 +996,58 @@ chDomainGetMaxVcpus(virDomainPtr dom)
 }
 
 static int
+chDomainGetVcpuPinInfo(virDomainPtr dom,
+                       int ncpumaps,
+                       unsigned char *cpumaps,
+                       int maplen,
+                       unsigned int flags)
+{
+    virDomainObjPtr vm = NULL;
+    virDomainDefPtr def;
+    bool live;
+    int ret = -1;
+    g_autoptr(virBitmap) hostcpus = NULL;
+    virBitmapPtr autoCpuset = NULL;
+
+    virCheckFlags(VIR_DOMAIN_AFFECT_LIVE |
+                  VIR_DOMAIN_AFFECT_CONFIG, -1);
+
+    if (!(vm = chDomObjFromDomain(dom)))
+        goto cleanup;
+
+    if (virDomainGetVcpuPinInfoEnsureACL(dom->conn, vm->def) < 0)
+        goto cleanup;
+
+    if (!(def = virDomainObjGetOneDefState(vm, flags, &live)))
+        goto cleanup;
+
+    if (!(hostcpus = virHostCPUGetAvailableCPUsBitmap()))
+        goto cleanup;
+
+    if (live)
+        autoCpuset = CH_DOMAIN_PRIVATE(vm)->autoCpuset;
+
+    ret = virDomainDefGetVcpuPinInfoHelper(def, maplen, ncpumaps, cpumaps,
+                                           hostcpus, autoCpuset);
+ cleanup:
+    virDomainObjEndAPI(&vm);
+    return ret;
+}
+
+static int
+chNodeGetCPUMap(virConnectPtr conn,
+                  unsigned char **cpumap,
+                  unsigned int *online,
+                  unsigned int flags)
+{
+    if (virNodeGetCPUMapEnsureACL(conn) < 0)
+        return -1;
+
+    return virHostCPUGetMap(cpumap, online, flags);
+}
+
+
+static int
 chDomainHelperGetVcpus(virDomainObjPtr vm,
                        virVcpuInfoPtr info,
                        unsigned long long *cpuwait,
@@ -1131,6 +1183,8 @@ static virHypervisorDriver chHypervisorDriver = {
     .domainGetVcpus = chDomainGetVcpus,                     /* 6.7.0 */
     .domainGetVcpusFlags = chDomainGetVcpusFlags,           /* 6.7.0 */
     .domainGetMaxVcpus = chDomainGetMaxVcpus,               /* 6.7.0 */
+    .domainGetVcpuPinInfo = chDomainGetVcpuPinInfo,         /* 6.7.0 */
+    .nodeGetCPUMap = chNodeGetCPUMap,                       /* 6.7.0 */
 };
 
 static virConnectDriver chConnectDriver = {

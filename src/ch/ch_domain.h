@@ -58,6 +58,8 @@ struct _virCHDomainObjPrivate {
     virCHMonitorPtr monitor;
 
     virChrdevsPtr devs;
+
+    virBitmapPtr autoCpuset;
 };
 
 #define CH_DOMAIN_PRIVATE(vm) \
