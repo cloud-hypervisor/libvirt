@@ -223,7 +223,8 @@ virCHMonitorBuildDisksJson(virJSONValuePtr content, virDomainDefPtr vmdef)
 }
 
 static int
-virCHMonitorBuildNetJson(virJSONValuePtr nets, virDomainNetDefPtr netdef)
+virCHMonitorBuildNetJson(virJSONValuePtr nets, virDomainNetDefPtr netdef,
+                         size_t *nnicindexes, int **nicindexes)
 {
     virDomainNetType netType = virDomainNetGetActualType(netdef);
     char macaddr[VIR_MAC_STRING_BUFLEN];
@@ -255,6 +256,17 @@ virCHMonitorBuildNetJson(virJSONValuePtr nets, virDomainNetDefPtr netdef)
             if (virJSONValueObjectAppendString(net, "mask", netmaskStr) < 0)
                 goto cleanup;
         }
+
+        /* network and bridge use a tap device, and direct uses a
+         * macvtap device
+         */
+        if (nicindexes && nnicindexes && netdef->ifname) {
+            int nicindex;
+            if (virNetDevGetIndex(netdef->ifname, &nicindex) < 0 ||
+                VIR_APPEND_ELEMENT(*nicindexes, *nnicindexes, nicindex) < 0)
+                goto cleanup;
+        }
+
         break;
     case VIR_DOMAIN_NET_TYPE_VHOSTUSER:
         if ((virDomainChrType)netdef->data.vhostuser->type != VIR_DOMAIN_CHR_TYPE_UNIX) {
@@ -328,7 +340,8 @@ virCHMonitorBuildNetJson(virJSONValuePtr nets, virDomainNetDefPtr netdef)
 }
 
 static int
-virCHMonitorBuildNetsJson(virJSONValuePtr content, virDomainDefPtr vmdef)
+virCHMonitorBuildNetsJson(virJSONValuePtr content, virDomainDefPtr vmdef,
+                          size_t *nnicindexes, int **nicindexes)
 {
     virJSONValuePtr nets;
     size_t i;
@@ -337,7 +350,8 @@ virCHMonitorBuildNetsJson(virJSONValuePtr content, virDomainDefPtr vmdef)
         nets = virJSONValueNewArray();
 
         for (i = 0; i < vmdef->nnets; i++) {
-            if (virCHMonitorBuildNetJson(nets, vmdef->nets[i]) < 0)
+            if (virCHMonitorBuildNetJson(nets, vmdef->nets[i],
+                                         nnicindexes, nicindexes) < 0)
                 goto cleanup;
         }
         if (virJSONValueObjectAppend(content, "net", nets) < 0)
@@ -408,7 +422,8 @@ virCHMonitorBuildDevicesJson(virJSONValuePtr content, virDomainDefPtr vmdef)
 }
 
 static int
-virCHMonitorBuildVMJson(virDomainDefPtr vmdef, char **jsonstr)
+virCHMonitorBuildVMJson(virDomainDefPtr vmdef, char **jsonstr,
+                        size_t *nnicindexes, int **nicindexes)
 {
     virJSONValuePtr content = virJSONValueNewObject();
     int ret = -1;
@@ -437,7 +452,8 @@ virCHMonitorBuildVMJson(virDomainDefPtr vmdef, char **jsonstr)
     if (virCHMonitorBuildDisksJson(content, vmdef) < 0)
         goto cleanup;
 
-    if (virCHMonitorBuildNetsJson(content, vmdef) < 0)
+    if (virCHMonitorBuildNetsJson(content, vmdef,
+                                  nnicindexes, nicindexes) < 0)
         goto cleanup;
 
     if (virCHMonitorBuildDevicesJson(content, vmdef) < 0)
@@ -790,7 +806,8 @@ virCHMonitorShutdownVMM(virCHMonitorPtr mon)
 }
 
 int
-virCHMonitorCreateVM(virCHMonitorPtr mon)
+virCHMonitorCreateVM(virCHMonitorPtr mon,
+                     size_t *nnicindexes, int **nicindexes)
 {
     g_autofree char *url = NULL;
     int responseCode = 0;
@@ -803,7 +820,8 @@ virCHMonitorCreateVM(virCHMonitorPtr mon)
     headers = curl_slist_append(headers, "Content-Type: application/json");
     headers = curl_slist_append(headers, "Expect:");
 
-    if (virCHMonitorBuildVMJson(mon->vm->def, &payload) != 0)
+    if (virCHMonitorBuildVMJson(mon->vm->def, &payload,
+                                nnicindexes, nicindexes) != 0)
         return -1;
 
     virObjectLock(mon);

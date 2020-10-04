@@ -950,6 +950,8 @@ static int chStateInitialize(bool privileged,
     if (chExtractVersion(ch_driver) < 0)
         goto cleanup;
 
+    ch_driver->privileged = privileged;
+
     return VIR_DRV_STATE_INIT_COMPLETE;
 
  cleanup:

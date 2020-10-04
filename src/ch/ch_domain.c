@@ -21,9 +21,11 @@
 #include <config.h>
 
 #include "ch_domain.h"
+#include "domain_driver.h"
 #include "viralloc.h"
 #include "virlog.h"
 #include "virtime.h"
+#include "virsystemd.h"
 
 #define VIR_FROM_THIS VIR_FROM_CH
 
@@ -135,7 +137,7 @@ virCHDomainObjEndJob(virDomainObjPtr obj)
 }
 
 static void *
-virCHDomainObjPrivateAlloc(void *opaque G_GNUC_UNUSED)
+virCHDomainObjPrivateAlloc(void *opaque)
 {
     virCHDomainObjPrivatePtr priv;
 
@@ -146,6 +148,7 @@ virCHDomainObjPrivateAlloc(void *opaque G_GNUC_UNUSED)
         VIR_FREE(priv);
         return NULL;
     }
+    priv->driver = opaque;
 
     return priv;
 }
@@ -310,4 +313,25 @@ virCHDomainHasVcpuPids(virDomainObjPtr vm)
     }
 
     return false;
+}
+
+char *virCHDomainGetMachineName(virDomainObjPtr vm)
+{
+    virCHDomainObjPrivatePtr priv = CH_DOMAIN_PRIVATE(vm);
+    virCHDriverPtr driver = priv->driver;
+    char *ret = NULL;
+
+    if (vm->pid > 0) {
+        ret = virSystemdGetMachineNameByPID(vm->pid);
+        if (!ret)
+            virResetLastError();
+    }
+
+    if (!ret)
+        ret = virDomainDriverGenerateMachineName("ch",
+                                                 driver->embeddedRoot,
+                                                 vm->def->id, vm->def->name,
+                                                 driver->privileged);
+
+    return ret;
 }

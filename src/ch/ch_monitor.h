@@ -54,7 +54,8 @@ struct _virCHMonitor {
 virCHMonitorPtr virCHMonitorNew(virDomainObjPtr vm, const char *socketdir);
 void virCHMonitorClose(virCHMonitorPtr mon);
 
-int virCHMonitorCreateVM(virCHMonitorPtr mon);
+int virCHMonitorCreateVM(virCHMonitorPtr mon,
+                         size_t *nnicindexes, int **nicindexes);
 int virCHMonitorBootVM(virCHMonitorPtr mon);
 int virCHMonitorShutdownVM(virCHMonitorPtr mon);
 int virCHMonitorRebootVM(virCHMonitorPtr mon);
