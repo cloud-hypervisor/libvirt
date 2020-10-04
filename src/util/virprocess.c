@@ -1531,3 +1531,139 @@ virProcessSetScheduler(pid_t pid G_GNUC_UNUSED,
 }
 
 #endif /* !HAVE_SCHED_SETSCHEDULER */
+
+/*
+TODO: This method was cloned from qemuGetProcessInfo in src/qemu/qemu_driver.c.
+Need to refactor qemu driver to use this shared function.
+*/
+int
+virProcessGetStatInfo(unsigned long long *cpuTime, int *lastCpu, long *vm_rss,
+                   pid_t pid, pid_t tid)
+{
+    g_autofree char *proc = NULL;
+    FILE *pidinfo;
+    unsigned long long usertime = 0, systime = 0;
+    long rss = 0;
+    int cpu = 0;
+
+    /* In general, we cannot assume pid_t fits in int; but /proc parsing
+     * is specific to Linux where int works fine.  */
+    if (tid)
+        proc = g_strdup_printf("/proc/%d/task/%d/stat", (int)pid, tid);
+    else
+        proc = g_strdup_printf("/proc/%d/stat", (int)pid);
+    if (!proc)
+        return -1;
+
+    pidinfo = fopen(proc, "r");
+
+    /* See 'man proc' for information about what all these fields are. We're
+     * only interested in a very few of them */
+    if (!pidinfo ||
+        fscanf(pidinfo,
+               /* pid -> stime */
+               "%*d (%*[^)]) %*c %*d %*d %*d %*d %*d %*u %*u %*u %*u %*u %llu %llu"
+               /* cutime -> endcode */
+               "%*d %*d %*d %*d %*d %*d %*u %*u %ld %*u %*u %*u"
+               /* startstack -> processor */
+               "%*u %*u %*u %*u %*u %*u %*u %*u %*u %*u %*d %d",
+               &usertime, &systime, &rss, &cpu) != 4) {
+        VIR_WARN("cannot parse process status data");
+    }
+
+    /* We got jiffies
+     * We want nanoseconds
+     * _SC_CLK_TCK is jiffies per second
+     * So calculate thus....
+     */
+    if (cpuTime)
+        *cpuTime = 1000ull * 1000ull * 1000ull * (usertime + systime)
+            / (unsigned long long)sysconf(_SC_CLK_TCK);
+    if (lastCpu)
+        *lastCpu = cpu;
+
+    if (vm_rss)
+        *vm_rss = rss * virGetSystemPageSizeKB();
+
+
+    VIR_DEBUG("Got status for %d/%d user=%llu sys=%llu cpu=%d rss=%ld",
+              (int)pid, tid, usertime, systime, cpu, rss);
+
+    VIR_FORCE_FCLOSE(pidinfo);
+
+    return 0;
+}
+/*
+TODO: This method was cloned from qemuGetSchedInfo in src/qemu/qemu_driver.c.
+Need to refactor qemu driver to use this shared function.
+*/
+int virProcessGetSchedInfo(unsigned long long *cpuWait, pid_t pid, pid_t tid)
+{
+    g_autofree char *proc = NULL;
+    g_autofree char *data = NULL;
+    char **lines = NULL;
+    size_t i;
+    int ret = -1;
+    double val;
+
+    *cpuWait = 0;
+
+    /* In general, we cannot assume pid_t fits in int; but /proc parsing
+     * is specific to Linux where int works fine.  */
+    if (tid)
+        proc = g_strdup_printf("/proc/%d/task/%d/sched", (int)pid, (int)tid);
+    else
+        proc = g_strdup_printf("/proc/%d/sched", (int)pid);
+    if (!proc)
+        goto cleanup;
+    ret = -1;
+
+    /* The file is not guaranteed to exist (needs CONFIG_SCHED_DEBUG) */
+    if (access(proc, R_OK) < 0) {
+        ret = 0;
+        goto cleanup;
+    }
+
+    if (virFileReadAll(proc, (1<<16), &data) < 0)
+        goto cleanup;
+
+    lines = virStringSplit(data, "\n", 0);
+    if (!lines)
+        goto cleanup;
+
+    for (i = 0; lines[i] != NULL; i++) {
+        const char *line = lines[i];
+
+        /* Needs CONFIG_SCHEDSTATS. The second check
+         * is the old name the kernel used in past */
+        if (STRPREFIX(line, "se.statistics.wait_sum") ||
+            STRPREFIX(line, "se.wait_sum")) {
+            line = strchr(line, ':');
+            if (!line) {
+                virReportError(VIR_ERR_INTERNAL_ERROR,
+                               _("Missing separator in sched info '%s'"),
+                               lines[i]);
+                goto cleanup;
+            }
+            line++;
+            while (*line == ' ')
+                line++;
+
+            if (virStrToDouble(line, NULL, &val) < 0) {
+                virReportError(VIR_ERR_INTERNAL_ERROR,
+                               _("Unable to parse sched info value '%s'"),
+                               line);
+                goto cleanup;
+            }
+
+            *cpuWait = (unsigned long long)(val * 1000000);
+            break;
+        }
+    }
+
+    ret = 0;
+
+ cleanup:
+    g_strfreev(lines);
+    return ret;
+}
