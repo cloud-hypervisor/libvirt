@@ -265,3 +265,24 @@ virCHDomainGetMonitor(virDomainObjPtr vm)
 {
     return CH_DOMAIN_PRIVATE(vm)->monitor;
 }
+
+int
+virCHDomainRefreshVcpuInfo(virDomainObjPtr vm)
+{
+    size_t maxvcpus = virDomainDefGetVcpusMax(vm->def);
+    virCHMonitorCPUInfoPtr info = NULL;
+    virCHDomainVcpuPrivatePtr vcpupriv;
+    virDomainVcpuDefPtr vcpu;
+    int i;
+
+    virCHMonitorGetCPUInfo(virCHDomainGetMonitor(vm), &info, maxvcpus);
+    for (i = 0; i < maxvcpus; i++) {
+        // TODO: hotplug support
+        vcpu = virDomainDefGetVcpu(vm->def, i);
+        vcpupriv = CH_DOMAIN_VCPU_PRIVATE(vcpu);
+        vcpupriv->tid = info[i].tid;
+    }
+
+    virCHMonitorCPUInfoFree(info);
+    return 0;
+}

@@ -86,3 +86,5 @@ virCHDomainObjBeginJob(virDomainObjPtr obj, enum virCHDomainJob job)
 
 void
 virCHDomainObjEndJob(virDomainObjPtr obj);
+
+int virCHDomainRefreshVcpuInfo(virDomainObjPtr vm);

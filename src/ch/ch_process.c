@@ -93,6 +93,8 @@ int virCHProcessStart(virCHDriverPtr driver,
     vm->def->id = vm->pid;
     virDomainObjSetState(vm, VIR_DOMAIN_RUNNING, reason);
 
+    virCHDomainRefreshVcpuInfo(vm);
+
     return 0;
 
  cleanup:
