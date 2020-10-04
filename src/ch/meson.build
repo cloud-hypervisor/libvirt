@@ -30,6 +30,9 @@ if conf.has('WITH_CH')
     include_directories: [
       conf_inc_dir,
     ],
+    link_with: [
+      virt_util_lib,
+    ]
   )
 
   virt_modules += {
