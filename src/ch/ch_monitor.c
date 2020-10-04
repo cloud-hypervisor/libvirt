@@ -859,3 +859,62 @@ virCHMonitorResumeVM(virCHMonitorPtr mon)
 {
     return virCHMonitorPutNoContent(mon, URL_VM_RESUME);
 }
+
+int
+virCHMonitorGetCPUInfo(virCHMonitorPtr mon,
+                       virCHMonitorCPUInfoPtr *vcpus,
+                       size_t maxvcpus)
+{
+    virCHMonitorCPUInfoPtr info = NULL;
+    g_autofree pid_t *tids = NULL;
+    virDomainObjPtr vm = mon->vm;
+    size_t ntids = 0;
+    size_t i;
+
+
+    if (VIR_ALLOC_N(info, maxvcpus) < 0)
+        return -1;
+
+    if (virProcessGetPids(vm->pid, &ntids, &tids) < 0) {
+        *vcpus = g_steal_pointer(&info);
+        return 0;
+    }
+
+    for (i = 0; i < ntids; i++) {
+        g_autofree char *proc = NULL;
+        g_autofree char *data = NULL;
+
+        proc = g_strdup_printf("/proc/%d/task/%d/comm",
+                (int)vm->pid, (int)tids[i]);
+
+        if (virFileReadAll(proc, (1<<16), &data) < 0) {
+            continue;
+        }
+
+        VIR_INFO("VM PID: %d, TID %d, COMM: %s",
+                (int)vm->pid, (int)tids[i], data);
+        if (STRPREFIX(data, "vcpu")) {
+            int index;
+            if ((index = strtol(data + 4, NULL, 0)) < 0) {
+                VIR_WARN("Index is not specified correctly");
+                continue;
+            }
+            info[index].tid = tids[i];
+            info[index].online = true;
+            VIR_INFO("vcpu%d -> tid: %d", index, tids[i]);
+        }
+
+    }
+    *vcpus = g_steal_pointer(&info);
+
+    return 0;
+}
+
+void
+virCHMonitorCPUInfoFree(virCHMonitorCPUInfoPtr cpus)
+{
+    if (!cpus)
+        return;
+
+    VIR_FREE(cpus);
+}

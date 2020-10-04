@@ -60,3 +60,16 @@ int virCHMonitorShutdownVM(virCHMonitorPtr mon);
 int virCHMonitorRebootVM(virCHMonitorPtr mon);
 int virCHMonitorSuspendVM(virCHMonitorPtr mon);
 int virCHMonitorResumeVM(virCHMonitorPtr mon);
+
+typedef struct _virCHMonitorCPUInfo virCHMonitorCPUInfo;
+typedef virCHMonitorCPUInfo *virCHMonitorCPUInfoPtr;
+
+struct _virCHMonitorCPUInfo {
+    pid_t tid;
+
+    bool online;
+};
+void virCHMonitorCPUInfoFree(virCHMonitorCPUInfoPtr cpus);
+int virCHMonitorGetCPUInfo(virCHMonitorPtr mon,
+                       virCHMonitorCPUInfoPtr *vcpus,
+                       size_t maxvcpus);
