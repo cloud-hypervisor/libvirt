@@ -88,3 +88,5 @@ void
 virCHDomainObjEndJob(virDomainObjPtr obj);
 
 int virCHDomainRefreshVcpuInfo(virDomainObjPtr vm);
+pid_t virCHDomainGetVcpuPid(virDomainObjPtr vm, unsigned int vcpuid);
+bool virCHDomainHasVcpuPids(virDomainObjPtr vm);

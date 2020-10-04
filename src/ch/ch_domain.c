@@ -286,3 +286,28 @@ virCHDomainRefreshVcpuInfo(virDomainObjPtr vm)
     virCHMonitorCPUInfoFree(info);
     return 0;
 }
+
+pid_t
+virCHDomainGetVcpuPid(virDomainObjPtr vm,
+                     unsigned int vcpuid)
+{
+    virDomainVcpuDefPtr vcpu = virDomainDefGetVcpu(vm->def, vcpuid);
+    return CH_DOMAIN_VCPU_PRIVATE(vcpu)->tid;
+}
+
+bool
+virCHDomainHasVcpuPids(virDomainObjPtr vm)
+{
+    size_t i;
+    size_t maxvcpus = virDomainDefGetVcpusMax(vm->def);
+    virDomainVcpuDefPtr vcpu;
+
+    for (i = 0; i < maxvcpus; i++) {
+        vcpu = virDomainDefGetVcpu(vm->def, i);
+
+        if (CH_DOMAIN_VCPU_PRIVATE(vcpu)->tid > 0)
+            return true;
+    }
+
+    return false;
+}
