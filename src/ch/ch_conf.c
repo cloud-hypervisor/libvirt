@@ -22,6 +22,7 @@
 
 #include "configmake.h"
 #include "viralloc.h"
+#include "virconf.h"
 #include "vircommand.h"
 #include "virlog.h"
 #include "virobject.h"
@@ -143,6 +144,8 @@ virCHDriverConfigNew(void)
 
     cfg->stateDir = g_strdup(CH_STATE_DIR);
     cfg->logDir = g_strdup(CH_LOG_DIR);
+
+    cfg->cgroupControllers = -1; /* Auto detect */
 
     return cfg;
 }

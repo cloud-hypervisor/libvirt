@@ -40,7 +40,11 @@ struct _virCHDriverConfig {
 
     char *stateDir;
     char *logDir;
+
+    int cgroupControllers;
 };
+
+G_DEFINE_AUTOPTR_CLEANUP_FUNC(virCHDriverConfig, virObjectUnref);
 
 struct _virCHDriver
 {
