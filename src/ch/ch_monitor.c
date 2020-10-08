@@ -40,6 +40,8 @@ VIR_LOG_INIT("ch.ch_monitor");
 static virClassPtr virCHMonitorClass;
 static void virCHMonitorDispose(void *obj);
 
+static void virCHMonitorThreadInfoFree(virCHMonitorPtr mon);
+
 static int virCHMonitorOnceInit(void)
 {
     if (!VIR_CLASS_NEW(virCHMonitor, virClassForObjectLockable()))
@@ -555,6 +557,7 @@ static void virCHMonitorDispose(void *opaque)
     virCHMonitorPtr mon = opaque;
 
     VIR_DEBUG("mon=%p", mon);
+    virCHMonitorThreadInfoFree(mon);
     virObjectUnref(mon->vm);
 }
 
@@ -878,25 +881,32 @@ virCHMonitorResumeVM(virCHMonitorPtr mon)
     return virCHMonitorPutNoContent(mon, URL_VM_RESUME);
 }
 
-int
-virCHMonitorGetCPUInfo(virCHMonitorPtr mon,
-                       virCHMonitorCPUInfoPtr *vcpus,
-                       size_t maxvcpus)
+static void
+virCHMonitorThreadInfoFree(virCHMonitorPtr mon)
 {
-    virCHMonitorCPUInfoPtr info = NULL;
+    mon->nthreads = 0;
+    if (mon->threads)
+        VIR_FREE(mon->threads);
+}
+
+static size_t
+virCHMonitorRefreshThreadInfo(virCHMonitorPtr mon)
+{
+    virCHMonitorThreadInfoPtr info = NULL;
     g_autofree pid_t *tids = NULL;
     virDomainObjPtr vm = mon->vm;
     size_t ntids = 0;
     size_t i;
 
 
-    if (VIR_ALLOC_N(info, maxvcpus) < 0)
-        return -1;
-
+    virCHMonitorThreadInfoFree(mon);
     if (virProcessGetPids(vm->pid, &ntids, &tids) < 0) {
-        *vcpus = g_steal_pointer(&info);
+        mon->threads = NULL;
         return 0;
     }
+
+    if (VIR_ALLOC_N(info, ntids) < 0)
+        return -1;
 
     for (i = 0; i < ntids; i++) {
         g_autofree char *proc = NULL;
@@ -917,22 +927,37 @@ virCHMonitorGetCPUInfo(virCHMonitorPtr mon,
                 VIR_WARN("Index is not specified correctly");
                 continue;
             }
-            info[index].tid = tids[i];
-            info[index].online = true;
+            info[i].type = virCHThreadTypeVcpu;
+            info[i].vcpuInfo.tid = tids[i];
+            info[i].vcpuInfo.online = true;
+            info[i].vcpuInfo.cpuid = index;
             VIR_INFO("vcpu%d -> tid: %d", index, tids[i]);
+        } else {
+            // XXX: Should virtio devices be IO threads?
+            info[i].type = virCHThreadTypeEmulator;
+            info[i].emuInfo.tid = tids[i];
+            strncpy(info[i].emuInfo.thrName, data, VIRCH_THREAD_NAME_LEN - 1);
         }
+        mon->nthreads++;
 
     }
-    *vcpus = g_steal_pointer(&info);
 
-    return 0;
+
+    mon->threads = info;
+
+    return mon->nthreads;
 }
 
-void
-virCHMonitorCPUInfoFree(virCHMonitorCPUInfoPtr cpus)
+size_t
+virCHMonitorGetThreadInfo(virCHMonitorPtr mon, bool refresh,
+                          virCHMonitorThreadInfoPtr *threads)
 {
-    if (!cpus)
-        return;
+    int nthreads = 0;
 
-    VIR_FREE(cpus);
+    if (refresh)
+        nthreads = virCHMonitorRefreshThreadInfo(mon);
+
+    *threads = mon->threads;
+
+    return nthreads;
 }

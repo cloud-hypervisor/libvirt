@@ -36,6 +36,54 @@
 #define URL_VM_Suspend "vm.pause"
 #define URL_VM_RESUME "vm.resume"
 
+#define VIRCH_THREAD_NAME_LEN   16
+
+typedef enum {
+    virCHThreadTypeEmulator,
+    virCHThreadTypeVcpu,
+    virCHThreadTypeIO,
+    virCHThreadTypeMax
+} virCHThreadType;
+
+typedef struct _virCHMonitorCPUInfo virCHMonitorCPUInfo;
+typedef virCHMonitorCPUInfo *virCHMonitorCPUInfoPtr;
+
+struct _virCHMonitorCPUInfo {
+    int cpuid;
+    pid_t tid;
+
+    bool online;
+};
+
+typedef struct _virCHMonitorEmuInfo virCHMonitorEmuInfo;
+typedef virCHMonitorEmuInfo *virCHMonitorEmuInfoPtr;
+
+struct _virCHMonitorEmuInfo {
+    char    thrName[VIRCH_THREAD_NAME_LEN];
+    pid_t   tid;
+};
+
+typedef struct _virCHMonitorIOInfo virCHMonitorIOInfo;
+typedef virCHMonitorIOInfo *virCHMonitorIOInfoPtr;
+
+struct _virCHMonitorIOInfo {
+    char    thrName[VIRCH_THREAD_NAME_LEN];
+    pid_t   tid;
+};
+
+typedef struct _virCHMonitorThreadInfo virCHMonitorThreadInfo;
+typedef virCHMonitorThreadInfo *virCHMonitorThreadInfoPtr;
+
+struct _virCHMonitorThreadInfo {
+    virCHThreadType type;
+
+    union {
+        virCHMonitorCPUInfo vcpuInfo;
+        virCHMonitorEmuInfo emuInfo;
+        virCHMonitorIOInfo ioInfo;
+    };
+};
+
 typedef struct _virCHMonitor virCHMonitor;
 typedef virCHMonitor *virCHMonitorPtr;
 
@@ -49,6 +97,9 @@ struct _virCHMonitor {
     pid_t pid;
 
     virDomainObjPtr vm;
+
+    size_t nthreads;
+    virCHMonitorThreadInfoPtr threads;
 };
 
 virCHMonitorPtr virCHMonitorNew(virDomainObjPtr vm, const char *socketdir);
@@ -62,15 +113,5 @@ int virCHMonitorRebootVM(virCHMonitorPtr mon);
 int virCHMonitorSuspendVM(virCHMonitorPtr mon);
 int virCHMonitorResumeVM(virCHMonitorPtr mon);
 
-typedef struct _virCHMonitorCPUInfo virCHMonitorCPUInfo;
-typedef virCHMonitorCPUInfo *virCHMonitorCPUInfoPtr;
-
-struct _virCHMonitorCPUInfo {
-    pid_t tid;
-
-    bool online;
-};
-void virCHMonitorCPUInfoFree(virCHMonitorCPUInfoPtr cpus);
-int virCHMonitorGetCPUInfo(virCHMonitorPtr mon,
-                       virCHMonitorCPUInfoPtr *vcpus,
-                       size_t maxvcpus);
+size_t virCHMonitorGetThreadInfo(virCHMonitorPtr mon, bool refresh,
+                                 virCHMonitorThreadInfoPtr *threads);

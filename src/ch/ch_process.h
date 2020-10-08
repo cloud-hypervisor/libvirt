@@ -28,3 +28,6 @@ int virCHProcessStart(virCHDriverPtr  driver,
 int virCHProcessStop(virCHDriverPtr driver,
                      virDomainObjPtr vm,
                      virDomainShutoffReason reason);
+
+int virCHProcessSetupVcpu(virDomainObjPtr vm,
+                          unsigned int vcpuid);
