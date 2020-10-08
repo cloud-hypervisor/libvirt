@@ -20,6 +20,7 @@
 
 #include <config.h>
 
+#include "datatypes.h"
 #include "ch_domain.h"
 #include "domain_driver.h"
 #include "viralloc.h"
@@ -348,4 +349,33 @@ char *virCHDomainGetMachineName(virDomainObjPtr vm)
                                                  driver->privileged);
 
     return ret;
+}
+
+/**
+ * virCHDomainObjFromDomain:
+ * @domain: Domain pointer that has to be looked up
+ *
+ * This function looks up @domain and returns the appropriate virDomainObjPtr
+ * that has to be released by calling virDomainObjEndAPI().
+ *
+ * Returns the domain object with incremented reference counter which is locked
+ * on success, NULL otherwise.
+ */
+virDomainObjPtr
+virCHDomainObjFromDomain(virDomainPtr domain)
+{
+    virDomainObjPtr vm;
+    virCHDriverPtr driver = domain->conn->privateData;
+    char uuidstr[VIR_UUID_STRING_BUFLEN];
+
+    vm = virDomainObjListFindByUUID(driver->domains, domain->uuid);
+    if (!vm) {
+        virUUIDFormat(domain->uuid, uuidstr);
+        virReportError(VIR_ERR_NO_DOMAIN,
+                       _("no domain with matching uuid '%s' (%s)"),
+                       uuidstr, domain->name);
+        return NULL;
+    }
+
+    return vm;
 }
