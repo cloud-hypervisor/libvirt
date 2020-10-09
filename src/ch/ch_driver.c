@@ -43,6 +43,7 @@
 #include "virutil.h"
 #include "viruuid.h"
 #include "virchrdev.h"
+#include "virnuma.h"
 
 #define VIR_FROM_THIS VIR_FROM_CH
 
@@ -1324,6 +1325,289 @@ chDomainPinVcpu(virDomainPtr dom,
                                   VIR_DOMAIN_AFFECT_LIVE);
 }
 
+#define CH_NB_NUMA_PARAM 2
+
+static int
+chDomainGetNumaParameters(virDomainPtr dom,
+                          virTypedParameterPtr params,
+                          int *nparams,
+                          unsigned int flags)
+{
+    size_t i;
+    virDomainObjPtr vm = NULL;
+    virDomainNumatuneMemMode tmpmode = VIR_DOMAIN_NUMATUNE_MEM_STRICT;
+    virCHDomainObjPrivatePtr priv;
+    g_autofree char *nodeset = NULL;
+    int ret = -1;
+    virDomainDefPtr def = NULL;
+    bool live = false;
+    virBitmapPtr autoNodeset = NULL;
+
+    virCheckFlags(VIR_DOMAIN_AFFECT_LIVE |
+                  VIR_DOMAIN_AFFECT_CONFIG |
+                  VIR_TYPED_PARAM_STRING_OKAY, -1);
+
+    VIR_INFO("virCHDomainObjFromDomain..");
+    if (!(vm = virCHDomainObjFromDomain(dom)))
+        return -1;
+    priv = vm->privateData;
+
+    VIR_INFO("virDomainGetNumaParametersEnsureACL..");
+    if (virDomainGetNumaParametersEnsureACL(dom->conn, vm->def) < 0)
+        goto cleanup;
+
+    VIR_INFO("virDomainObjGetOneDefState");
+    if (!(def = virDomainObjGetOneDefState(vm, flags, &live)))
+        goto cleanup;
+
+    if (live)
+        autoNodeset = priv->autoNodeset;
+
+    if ((*nparams) == 0) {
+        *nparams = CH_NB_NUMA_PARAM;
+        ret = 0;
+        goto cleanup;
+    }
+
+    for (i = 0; i < CH_NB_NUMA_PARAM && i < *nparams; i++) {
+        virMemoryParameterPtr param = &params[i];
+
+        switch (i) {
+        case 0: /* fill numa mode here */
+            ignore_value(virDomainNumatuneGetMode(def->numa, -1, &tmpmode));
+
+            VIR_INFO("virTypedParameterAssign after virDomainNumatuneGetMode");
+            if (virTypedParameterAssign(param, VIR_DOMAIN_NUMA_MODE,
+                                        VIR_TYPED_PARAM_INT, tmpmode) < 0)
+                goto cleanup;
+
+            break;
+
+        case 1: /* fill numa nodeset here */
+            nodeset = virDomainNumatuneFormatNodeset(def->numa, autoNodeset, -1);
+            if (!nodeset)
+                VIR_INFO("Nodeset NULL");
+            else
+                VIR_INFO("virTypedParameterAssign after virDomainNumatuneFormatNodeset");
+            if (!nodeset ||
+                virTypedParameterAssign(param, VIR_DOMAIN_NUMA_NODESET,
+                                        VIR_TYPED_PARAM_STRING, nodeset) < 0)
+                goto cleanup;
+
+            VIR_INFO("after virTypedParameterAssign after virDomainNumatuneFormatNodeset");
+            nodeset = NULL;
+            break;
+
+        /* coverity[dead_error_begin] */
+        default:
+            break;
+            /* should not hit here */
+        }
+    }
+
+    if (*nparams > CH_NB_NUMA_PARAM)
+        *nparams = CH_NB_NUMA_PARAM;
+    ret = 0;
+
+ cleanup:
+    virDomainObjEndAPI(&vm);
+    return ret;
+}
+
+static int
+chDomainSetNumaParamsLive(virDomainObjPtr vm,
+                          virBitmapPtr nodeset)
+{
+    virCgroupPtr cgroup_temp = NULL;
+    virCHDomainObjPrivatePtr priv = vm->privateData;
+    g_autofree char *nodeset_str = NULL;
+    virDomainNumatuneMemMode mode;
+    size_t i = 0;
+    int ret = -1;
+
+    if (virDomainNumatuneGetMode(vm->def->numa, -1, &mode) == 0 &&
+        mode != VIR_DOMAIN_NUMATUNE_MEM_STRICT) {
+        virReportError(VIR_ERR_OPERATION_INVALID, "%s",
+                       _("change of nodeset for running domain "
+                         "requires strict numa mode"));
+        goto cleanup;
+    }
+
+    if (!virNumaNodesetIsAvailable(nodeset))
+        goto cleanup;
+
+    /* Ensure the cpuset string is formatted before passing to cgroup */
+    if (!(nodeset_str = virBitmapFormat(nodeset)))
+        goto cleanup;
+
+    if (virCgroupNewThread(priv->cgroup, VIR_CGROUP_THREAD_EMULATOR, 0,
+                           false, &cgroup_temp) < 0 ||
+        virCgroupSetCpusetMems(cgroup_temp, nodeset_str) < 0)
+        goto cleanup;
+    virCgroupFree(&cgroup_temp);
+
+    for (i = 0; i < virDomainDefGetVcpusMax(vm->def); i++) {
+        virDomainVcpuDefPtr vcpu = virDomainDefGetVcpu(vm->def, i);
+
+        if (!vcpu->online)
+            continue;
+
+        if (virCgroupNewThread(priv->cgroup, VIR_CGROUP_THREAD_VCPU, i,
+                               false, &cgroup_temp) < 0 ||
+            virCgroupSetCpusetMems(cgroup_temp, nodeset_str) < 0)
+            goto cleanup;
+        virCgroupFree(&cgroup_temp);
+    }
+
+    for (i = 0; i < vm->def->niothreadids; i++) {
+        if (virCgroupNewThread(priv->cgroup, VIR_CGROUP_THREAD_IOTHREAD,
+                               vm->def->iothreadids[i]->iothread_id,
+                               false, &cgroup_temp) < 0 ||
+            virCgroupSetCpusetMems(cgroup_temp, nodeset_str) < 0)
+            goto cleanup;
+        virCgroupFree(&cgroup_temp);
+    }
+
+    /* set nodeset for root cgroup */
+    if (virCgroupSetCpusetMems(priv->cgroup, nodeset_str) < 0)
+        goto cleanup;
+
+    ret = 0;
+ cleanup:
+    virCgroupFree(&cgroup_temp);
+
+    return ret;
+}
+
+static int
+chDomainSetNumaParameters(virDomainPtr dom,
+                          virTypedParameterPtr params,
+                          int nparams,
+                          unsigned int flags)
+{
+    virCHDriverPtr driver = dom->conn->privateData;
+    size_t i;
+    virDomainDefPtr def;
+    virDomainDefPtr persistentDef;
+    virDomainObjPtr vm = NULL;
+    int ret = -1;
+    g_autoptr(virCHDriverConfig) cfg = NULL;
+    virCHDomainObjPrivatePtr priv;
+    virBitmapPtr nodeset = NULL;
+    virDomainNumatuneMemMode config_mode;
+    int mode = -1;
+
+    virCheckFlags(VIR_DOMAIN_AFFECT_LIVE |
+                  VIR_DOMAIN_AFFECT_CONFIG, -1);
+
+    if (virTypedParamsValidate(params, nparams,
+                               VIR_DOMAIN_NUMA_MODE,
+                               VIR_TYPED_PARAM_INT,
+                               VIR_DOMAIN_NUMA_NODESET,
+                               VIR_TYPED_PARAM_STRING,
+                               NULL) < 0)
+        return -1;
+
+    if (!(vm = virCHDomainObjFromDomain(dom)))
+        return -1;
+
+    priv = vm->privateData;
+    cfg = virCHDriverGetConfig(driver);
+
+    if (virDomainSetNumaParametersEnsureACL(dom->conn, vm->def, flags) < 0)
+        goto cleanup;
+
+    for (i = 0; i < nparams; i++) {
+        virTypedParameterPtr param = &params[i];
+
+        if (STREQ(param->field, VIR_DOMAIN_NUMA_MODE)) {
+            mode = param->value.i;
+
+            if (mode < 0 || mode >= VIR_DOMAIN_NUMATUNE_MEM_LAST) {
+                virReportError(VIR_ERR_INVALID_ARG,
+                               _("unsupported numatune mode: '%d'"), mode);
+                goto cleanup;
+            }
+
+        } else if (STREQ(param->field, VIR_DOMAIN_NUMA_NODESET)) {
+            if (virBitmapParse(param->value.s, &nodeset,
+                               VIR_DOMAIN_CPUMASK_LEN) < 0)
+                goto cleanup;
+
+            if (virBitmapIsAllClear(nodeset)) {
+                virReportError(VIR_ERR_OPERATION_INVALID,
+                               _("Invalid nodeset of 'numatune': %s"),
+                               param->value.s);
+                goto cleanup;
+            }
+        }
+    }
+
+    if (virCHDomainObjBeginJob(vm, CH_JOB_MODIFY) < 0)
+        goto cleanup;
+
+    if (virDomainObjGetDefs(vm, flags, &def, &persistentDef) < 0)
+        goto endjob;
+
+    if (def) {
+        if (!driver->privileged) {
+            virReportError(VIR_ERR_OPERATION_UNSUPPORTED, "%s",
+                           _("NUMA tuning is not available in session mode"));
+            goto endjob;
+        }
+
+        if (!virCgroupHasController(priv->cgroup, VIR_CGROUP_CONTROLLER_CPUSET)) {
+            virReportError(VIR_ERR_OPERATION_INVALID, "%s",
+                           _("cgroup cpuset controller is not mounted"));
+            goto endjob;
+        }
+
+        if (mode != -1 &&
+            virDomainNumatuneGetMode(def->numa, -1, &config_mode) == 0 &&
+            config_mode != mode) {
+            virReportError(VIR_ERR_OPERATION_INVALID, "%s",
+                           _("can't change numatune mode for running domain"));
+            goto endjob;
+        }
+
+        if (nodeset &&
+            chDomainSetNumaParamsLive(vm, nodeset) < 0)
+            goto endjob;
+
+        if (virDomainNumatuneSet(def->numa,
+                                 def->placement_mode ==
+                                 VIR_DOMAIN_CPU_PLACEMENT_MODE_STATIC,
+                                 -1, mode, nodeset) < 0)
+            goto endjob;
+
+        if (virDomainObjSave(vm, driver->xmlopt, cfg->stateDir) < 0)
+            goto endjob;
+    }
+
+    /*
+    if (persistentDef) {
+        if (virDomainNumatuneSet(persistentDef->numa,
+                                 persistentDef->placement_mode ==
+                                 VIR_DOMAIN_CPU_PLACEMENT_MODE_STATIC,
+                                 -1, mode, nodeset) < 0)
+            goto endjob;
+
+        if (virDomainDefSave(persistentDef, driver->xmlopt, cfg->configDir) < 0)
+            goto endjob;
+    }
+    */
+
+    ret = 0;
+
+ endjob:
+    virCHDomainObjEndJob(vm);
+
+ cleanup:
+    virBitmapFree(nodeset);
+    virDomainObjEndAPI(&vm);
+    return ret;
+}
+
 /* Function Tables */
 static virHypervisorDriver chHypervisorDriver = {
     .name = "CH",
@@ -1368,6 +1652,8 @@ static virHypervisorDriver chHypervisorDriver = {
     .domainPinVcpu = chDomainPinVcpu,                       /* 6.7.0 */
     .domainPinVcpuFlags = chDomainPinVcpuFlags,             /* 6.7.0 */
     .nodeGetCPUMap = chNodeGetCPUMap,                       /* 6.7.0 */
+    .domainSetNumaParameters = chDomainSetNumaParameters,   /* 6.7.0 */
+    .domainGetNumaParameters = chDomainGetNumaParameters,   /* 6.7.0 */
 };
 
 static virConnectDriver chConnectDriver = {
