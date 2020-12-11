@@ -932,8 +932,11 @@ virCHMonitorRefreshThreadInfo(virCHMonitorPtr mon)
             info[i].vcpuInfo.online = true;
             info[i].vcpuInfo.cpuid = index;
             VIR_INFO("vcpu%d -> tid: %d", index, tids[i]);
-        } else {
-            // XXX: Should virtio devices be IO threads?
+        } else if (STRPREFIX(data, "virtio")) {
+            info[i].type = virCHThreadTypeIO;
+            info[i].ioInfo.tid = tids[i];
+            strncpy(info[i].ioInfo.thrName, data, VIRCH_THREAD_NAME_LEN - 1);
+        }else {
             info[i].type = virCHThreadTypeEmulator;
             info[i].emuInfo.tid = tids[i];
             strncpy(info[i].emuInfo.thrName, data, VIRCH_THREAD_NAME_LEN - 1);
