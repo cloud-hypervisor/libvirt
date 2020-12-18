@@ -31,3 +31,10 @@ int virCHProcessStop(virCHDriverPtr driver,
 
 int virCHProcessSetupVcpu(virDomainObjPtr vm,
                           unsigned int vcpuid);
+
+int virCHProcessSetupIOThread(virDomainObjPtr vm,
+                             virDomainIOThreadInfoPtr iothread);
+
+int
+virCHProcessSetupEmulatorThread(virDomainObjPtr vm,
+                         virCHMonitorEmuThreadInfo emuthread);

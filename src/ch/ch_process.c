@@ -231,47 +231,71 @@ virCHProcessSetupPid(virDomainObjPtr vm,
     return ret;
 }
 
-
-static int
-virCHProcessSetupEmulator(virDomainObjPtr vm)
+int
+virCHProcessSetupIOThread(virDomainObjPtr vm,
+                         virDomainIOThreadInfoPtr iothread)
 {
     virCHDomainObjPrivatePtr priv = vm->privateData;
-    virCHMonitorThreadInfoPtr threads = NULL;
-    virCgroupPtr cgroup = NULL;
-    size_t nthreads;
-    int controllers;
-    int i, ret;
+    return virCHProcessSetupPid(vm, iothread->iothread_id,
+                               VIR_CGROUP_THREAD_IOTHREAD,
+                               iothread->iothread_id,
+                               priv->autoCpuset, // This should be updated when CLH supports accepting
+                                     // iothread settings from input domain definition
+                               vm->def->cputune.iothread_period,
+                               vm->def->cputune.iothread_quota,
+                               NULL); // CLH doesn't allow choosing a scheduler for iothreads.
+}
 
-    ret = virCHProcessSetupPid(vm, vm->pid, VIR_CGROUP_THREAD_EMULATOR,
+static int
+virCHProcessSetupIOThreads(virDomainObjPtr vm)
+{
+    virCHDomainObjPrivatePtr priv = vm->privateData;
+    virDomainIOThreadInfoPtr *iothreads = NULL;
+    size_t i;
+    size_t  niothreads;
+
+    niothreads = virCHMonitorGetIOThreads(priv->monitor, &iothreads);
+    for (i = 0; i < niothreads; i++) {
+        VIR_DEBUG("IOThread index = %ld , tid = %d", i, iothreads[i]->iothread_id);
+        if (virCHProcessSetupIOThread(vm, iothreads[i]) < 0)
+            return -1;
+    }
+    return 0;
+}
+
+
+int
+virCHProcessSetupEmulatorThread(virDomainObjPtr vm,
+                         virCHMonitorEmuThreadInfo emuthread)
+{
+    return virCHProcessSetupPid(vm, emuthread.tid, VIR_CGROUP_THREAD_EMULATOR,
                                0, vm->def->cputune.emulatorpin,
                                vm->def->cputune.emulator_period,
                                vm->def->cputune.emulator_quota,
                                vm->def->cputune.emulatorsched);
-    if (ret < 0)
-        return ret;
+}
 
-    controllers = ((1 << VIR_CGROUP_CONTROLLER_CPU) |
-                   (1 << VIR_CGROUP_CONTROLLER_CPUACCT) |
-                   (1 << VIR_CGROUP_CONTROLLER_CPUSET));
+static int
+virCHProcessSetupEmulatorThreads(virDomainObjPtr vm)
+{
+    int i=0;
+    virCHDomainObjPrivatePtr priv = vm->privateData;
+    /*
+    Cloud-hypervisor start 4 Emulator threads by default:
+    vmm
+    cloud-hypervisor
+    http-server
+    signal_handler
+    */
+    for (i=0; i < priv->monitor->nthreads; i++) {
+        if (priv->monitor->threads[i].type == virCHThreadTypeEmulator) {
+            VIR_DEBUG("Setup tid = %d (%s) Emulator thread", priv->monitor->threads[i].emuInfo.tid,
+                priv->monitor->threads[i].emuInfo.thrName);
 
-    if ((ret = virCgroupNewDetect(vm->pid, controllers, &cgroup)) < 0)
-        return ret;
-
-    nthreads = virCHMonitorGetThreadInfo(priv->monitor, true, &threads);
-
-    if (nthreads <= 0)
-        return 0;
-
-    for (i = 0; i < nthreads; i++) {
-        if (threads[i].type != virCHThreadTypeEmulator)
-            continue;
-
-        if (threads[i].emuInfo.tid == vm->pid)
-            continue;
-
-        virCgroupAddProcess(cgroup, threads[i].emuInfo.tid);
+            if (virCHProcessSetupEmulatorThread(vm, priv->monitor->threads[i].emuInfo ) < 0)
+                return -1;
+        }
     }
-
     return 0;
 }
 
@@ -402,7 +426,11 @@ int virCHProcessStart(virCHDriverPtr driver,
     virCHDomainRefreshThreadInfo(vm);
 
     VIR_DEBUG("Setting emulator tuning/settings");
-    if (virCHProcessSetupEmulator(vm) < 0)
+    if (virCHProcessSetupEmulatorThreads(vm) < 0)
+        goto cleanup;
+
+    VIR_DEBUG("Setting iothread tuning/settings");
+    if (virCHProcessSetupIOThreads(vm) < 0)
         goto cleanup;
 
     VIR_DEBUG("Setting global CPU cgroup (if required)");
