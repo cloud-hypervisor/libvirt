@@ -55,18 +55,18 @@ struct _virCHMonitorCPUInfo {
     bool online;
 };
 
-typedef struct _virCHMonitorEmuInfo virCHMonitorEmuInfo;
-typedef virCHMonitorEmuInfo *virCHMonitorEmuInfoPtr;
+typedef struct _virCHMonitorEmuThreadInfo virCHMonitorEmuThreadInfo;
+typedef virCHMonitorEmuThreadInfo *virCHMonitorEmuThreadInfoPtr;
 
-struct _virCHMonitorEmuInfo {
+struct _virCHMonitorEmuThreadInfo {
     char    thrName[VIRCH_THREAD_NAME_LEN];
     pid_t   tid;
 };
 
-typedef struct _virCHMonitorIOInfo virCHMonitorIOInfo;
-typedef virCHMonitorIOInfo *virCHMonitorIOInfoPtr;
+typedef struct _virCHMonitorIOThreadInfo virCHMonitorIOThreadInfo;
+typedef virCHMonitorIOThreadInfo *virCHMonitorIOThreadInfoPtr;
 
-struct _virCHMonitorIOInfo {
+struct _virCHMonitorIOThreadInfo {
     char    thrName[VIRCH_THREAD_NAME_LEN];
     pid_t   tid;
 };
@@ -79,8 +79,8 @@ struct _virCHMonitorThreadInfo {
 
     union {
         virCHMonitorCPUInfo vcpuInfo;
-        virCHMonitorEmuInfo emuInfo;
-        virCHMonitorIOInfo ioInfo;
+        virCHMonitorEmuThreadInfo emuInfo;
+        virCHMonitorIOThreadInfo ioInfo;
     };
 };
 
