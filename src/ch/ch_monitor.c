@@ -951,6 +951,15 @@ virCHMonitorRefreshThreadInfo(virCHMonitorPtr mon)
     return mon->nthreads;
 }
 
+/**
+ * virCHMonitorGetThreadInfo:
+ * @mon: Pointer to the monitor
+ * @refresh: Refresh thread info or not
+ *
+ * Retrive thread info and store to @threads
+ *
+ * Returns count of threads on success.
+ */
 size_t
 virCHMonitorGetThreadInfo(virCHMonitorPtr mon, bool refresh,
                           virCHMonitorThreadInfoPtr *threads)
@@ -963,4 +972,66 @@ virCHMonitorGetThreadInfo(virCHMonitorPtr mon, bool refresh,
     *threads = mon->threads;
 
     return nthreads;
+}
+
+/**
+ * virCHMonitorGetIOThreads:
+ * @mon: Pointer to the monitor
+ * @iothreads: Location to return array of IOThreadInfo data
+ *
+ * Retrieve the list of iothreads defined/running for the machine
+ *
+ * Returns count of IOThreadInfo structures on success
+ *        -1 on error.
+ */
+int virCHMonitorGetIOThreads(virCHMonitorPtr mon,
+                            virDomainIOThreadInfoPtr **iothreads)
+{
+    size_t nthreads = 0, niothreads=0;
+    int i;
+    virDomainIOThreadInfoPtr *iothreadinfolist = NULL, iothreadinfo = NULL;
+
+    *iothreads = NULL;
+    nthreads = virCHMonitorRefreshThreadInfo(mon);
+
+    if (VIR_ALLOC_N(iothreadinfolist, nthreads) < 0)
+        goto cleanup;
+
+    for (i = 0; i < nthreads; i++){
+        virBitmapPtr map = NULL;
+        if (mon->threads[i].type == virCHThreadTypeIO) {
+            if(VIR_ALLOC(iothreadinfo) < 0)
+                goto cleanup;
+
+            iothreadinfo->iothread_id = mon->threads[i].ioInfo.tid;
+
+            if (!(map = virProcessGetAffinity(iothreadinfo->iothread_id)))
+                goto cleanup;
+
+            if (virBitmapToData(map, &(iothreadinfo->cpumap),
+                            &(iothreadinfo->cpumaplen)) < 0) {
+                virBitmapFree(map);
+                goto cleanup;
+            }
+            virBitmapFree(map);
+            //Append to iothreadinfolist
+            iothreadinfolist[niothreads] = iothreadinfo;
+            niothreads++;
+        }
+    }
+    VIR_DELETE_ELEMENT_INPLACE(iothreadinfolist,
+                                       niothreads, nthreads);
+    *iothreads = iothreadinfolist;
+    VIR_DEBUG("niothreads = %ld", niothreads);
+    return niothreads;
+
+    cleanup:
+        if (iothreadinfolist) {
+            for (i = 0; i < niothreads; i++)
+                VIR_FREE(iothreadinfolist[i]);
+            VIR_FREE(iothreadinfolist);
+        }
+        if (iothreadinfo)
+            VIR_FREE(iothreadinfo);
+        return -1;
 }
