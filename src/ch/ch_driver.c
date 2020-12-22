@@ -1347,16 +1347,13 @@ chDomainGetNumaParameters(virDomainPtr dom,
                   VIR_DOMAIN_AFFECT_CONFIG |
                   VIR_TYPED_PARAM_STRING_OKAY, -1);
 
-    VIR_INFO("virCHDomainObjFromDomain..");
     if (!(vm = virCHDomainObjFromDomain(dom)))
         return -1;
     priv = vm->privateData;
 
-    VIR_INFO("virDomainGetNumaParametersEnsureACL..");
     if (virDomainGetNumaParametersEnsureACL(dom->conn, vm->def) < 0)
         goto cleanup;
 
-    VIR_INFO("virDomainObjGetOneDefState");
     if (!(def = virDomainObjGetOneDefState(vm, flags, &live)))
         goto cleanup;
 
@@ -1376,7 +1373,6 @@ chDomainGetNumaParameters(virDomainPtr dom,
         case 0: /* fill numa mode here */
             ignore_value(virDomainNumatuneGetMode(def->numa, -1, &tmpmode));
 
-            VIR_INFO("virTypedParameterAssign after virDomainNumatuneGetMode");
             if (virTypedParameterAssign(param, VIR_DOMAIN_NUMA_MODE,
                                         VIR_TYPED_PARAM_INT, tmpmode) < 0)
                 goto cleanup;
@@ -1385,16 +1381,12 @@ chDomainGetNumaParameters(virDomainPtr dom,
 
         case 1: /* fill numa nodeset here */
             nodeset = virDomainNumatuneFormatNodeset(def->numa, autoNodeset, -1);
-            if (!nodeset)
-                VIR_INFO("Nodeset NULL");
-            else
-                VIR_INFO("virTypedParameterAssign after virDomainNumatuneFormatNodeset");
+
             if (!nodeset ||
                 virTypedParameterAssign(param, VIR_DOMAIN_NUMA_NODESET,
                                         VIR_TYPED_PARAM_STRING, nodeset) < 0)
                 goto cleanup;
 
-            VIR_INFO("after virTypedParameterAssign after virDomainNumatuneFormatNodeset");
             nodeset = NULL;
             break;
 

@@ -293,7 +293,6 @@ virCHProcessSetupVcpu(virDomainObjPtr vm,
     pid_t vcpupid = virCHDomainGetVcpuPid(vm, vcpuid);
     virDomainVcpuDefPtr vcpu = virDomainDefGetVcpu(vm->def, vcpuid);
 
-    VIR_INFO("vcpuid: %d, pid: %d ", vcpuid, vcpupid);
     return virCHProcessSetupPid(vm, vcpupid, VIR_CGROUP_THREAD_VCPU,
                                 vcpuid, vcpu->cpumask,
                                 vm->def->cputune.period,
