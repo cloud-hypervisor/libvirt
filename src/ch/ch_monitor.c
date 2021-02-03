@@ -56,7 +56,7 @@ VIR_ONCE_GLOBAL_INIT(virCHMonitor);
 
 int virCHMonitorShutdownVMM(virCHMonitorPtr mon);
 int virCHMonitorPutNoContent(virCHMonitorPtr mon, const char *endpoint);
-int virCHMonitorGet(virCHMonitorPtr mon, const char *endpoint);
+int virCHMonitorGet(virCHMonitorPtr mon, const char *endpoint, virJSONValuePtr *response);
 int virCHMonitorPingVMM(virCHMonitorPtr mon);
 
 static int
@@ -92,6 +92,55 @@ virCHMonitorBuildCPUJson(virJSONValuePtr content, virDomainDefPtr vmdef)
     virJSONValueFree(cpus);
     return -1;
 }
+
+static int
+virCHMonitorBuildPTYJson(virJSONValuePtr content, virDomainDefPtr vmdef)
+{
+    virJSONValuePtr ptyc = virJSONValueNewObject();
+    virJSONValuePtr ptys = virJSONValueNewObject();
+
+    if (vmdef->nconsoles || vmdef->nserials) {
+        if (vmdef->nconsoles > 1) {
+            virReportError(VIR_ERR_INTERNAL_ERROR, "%s",
+                           _("Only a single console can be configured for this domain"));
+            return -1;
+        }
+        if (vmdef->nserials > 1) {
+            virReportError(VIR_ERR_INTERNAL_ERROR, "%s",
+                           _("Only a single serial can be configured for this domain"));
+            return -1;
+        }
+    }
+
+    if (vmdef->nconsoles) {
+        if (virJSONValueObjectAppendString(ptyc, "mode", "Pty") < 0)
+            goto cleanup;
+    } else {
+        if (virJSONValueObjectAppendString(ptyc, "mode", "Null") < 0)
+            goto cleanup;
+    }
+
+    if (vmdef->nserials) {
+        if (virJSONValueObjectAppendString(ptys, "mode", "Pty") < 0)
+            goto cleanup;
+    } else {
+        if (virJSONValueObjectAppendString(ptys, "mode", "Null") < 0)
+            goto cleanup;
+    }
+
+    if (virJSONValueObjectAppend(content, "console", ptyc) < 0)
+        goto cleanup;
+    if (virJSONValueObjectAppend(content, "serial", ptys) < 0)
+        goto cleanup;
+
+    return 0;
+
+ cleanup:
+    virJSONValueFree(ptyc);
+    virJSONValueFree(ptys);
+    return -1;
+}
+
 
 static int
 virCHMonitorBuildKernelJson(virJSONValuePtr content, virDomainDefPtr vmdef)
@@ -449,6 +498,9 @@ virCHMonitorBuildVMJson(virDomainObjPtr vm, virDomainDefPtr vmdef, char **jsonst
     if (virCHMonitorBuildCPUJson(content, vmdef) < 0)
         goto cleanup;
 
+    if (virCHMonitorBuildPTYJson(content, vmdef) < 0)
+        goto cleanup;
+
     if (virCHMonitorBuildMemoryJson(content, vmdef) < 0)
         goto cleanup;
 
@@ -784,12 +836,33 @@ virCHMonitorPutNoContent(virCHMonitorPtr mon, const char *endpoint)
     return ret;
 }
 
+struct curl_data {
+    char *content;
+    size_t size;
+};
+
+static size_t
+curl_callback(void *contents, size_t size, size_t nmemb, void *userp)
+{
+    size_t content_size = size * nmemb;
+    struct curl_data *data = (struct curl_data *)userp;
+
+    data->content = g_malloc0(content_size + 1);
+    memcpy(data->content, contents, content_size);
+    data->content[content_size] = 0;
+    data->size = content_size;
+
+    return content_size;
+}
+
 int
-virCHMonitorGet(virCHMonitorPtr mon, const char *endpoint)
+virCHMonitorGet(virCHMonitorPtr mon, const char *endpoint, virJSONValuePtr *response)
 {
     char *url;
     int responseCode = 0;
     int ret = -1;
+    struct curl_slist *headers = NULL;
+    struct curl_data data;
 
     url = g_strdup_printf("%s/%s", URL_ROOT, endpoint);
 
@@ -801,12 +874,24 @@ virCHMonitorGet(virCHMonitorPtr mon, const char *endpoint)
     curl_easy_setopt(mon->handle, CURLOPT_UNIX_SOCKET_PATH, mon->socketpath);
     curl_easy_setopt(mon->handle, CURLOPT_URL, url);
 
+    if (response) {
+        headers = curl_slist_append(headers, "Accept: application/json");
+        headers = curl_slist_append(headers, "Content-Type: application/json");
+        curl_easy_setopt(mon->handle, CURLOPT_HTTPHEADER, headers);
+        curl_easy_setopt(mon->handle, CURLOPT_WRITEFUNCTION, curl_callback);
+        curl_easy_setopt(mon->handle, CURLOPT_WRITEDATA, (void *)&data);
+    }
+
     responseCode = virCHMonitorCurlPerform(mon->handle);
 
     virObjectUnlock(mon);
 
-    if (responseCode == 200 || responseCode == 204)
+    if (responseCode == 200 || responseCode == 204) {
         ret = 0;
+        if (response) {
+            *response = virJSONValueFromString(data.content);
+        }
+    }
 
     VIR_FREE(url);
     return ret;
@@ -815,7 +900,7 @@ virCHMonitorGet(virCHMonitorPtr mon, const char *endpoint)
 int
 virCHMonitorPingVMM(virCHMonitorPtr mon)
 {
-    return virCHMonitorGet(mon, URL_VMM_PING);
+    return virCHMonitorGet(mon, URL_VMM_PING, NULL);
 }
 
 int
@@ -991,6 +1076,22 @@ virCHMonitorRefreshThreadInfo(virCHMonitorPtr mon)
 
     return mon->nthreads;
 }
+
+/**
+ * virCHMonitorGetInfo:
+ * @mon: Pointer to the monitor
+ * @info: Get VM info
+ *
+ * Retrive the VM info and store in @info
+ *
+ * Returns 0 on success.
+ */
+int
+virCHMonitorGetInfo(virCHMonitorPtr mon, virJSONValuePtr *info)
+{
+    return virCHMonitorGet(mon, URL_VM_INFO, info);
+}
+
 
 /**
  * virCHMonitorGetThreadInfo:

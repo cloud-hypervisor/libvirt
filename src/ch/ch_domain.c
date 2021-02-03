@@ -149,6 +149,12 @@ virCHDomainObjPrivateAlloc(void *opaque)
         VIR_FREE(priv);
         return NULL;
     }
+
+    if (!(priv->devs = virChrdevAlloc())) {
+        VIR_FREE(priv);
+        return NULL;
+    }
+
     priv->driver = opaque;
 
     return priv;
@@ -159,6 +165,7 @@ virCHDomainObjPrivateFree(void *data)
 {
     virCHDomainObjPrivatePtr priv = data;
 
+    virChrdevFree(priv->devs);
     virCHDomainObjFreeJob(priv);
     VIR_FREE(priv);
 }

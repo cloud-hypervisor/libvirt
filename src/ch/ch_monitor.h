@@ -23,6 +23,7 @@
 #include <curl/curl.h>
 
 #include "virobject.h"
+#include "virjson.h"
 #include "domain_conf.h"
 
 #define URL_ROOT "http://localhost/api/v1"
@@ -35,6 +36,7 @@
 #define URL_VM_REBOOT "vm.reboot"
 #define URL_VM_Suspend "vm.pause"
 #define URL_VM_RESUME "vm.resume"
+#define URL_VM_INFO "vm.info"
 
 #define VIRCH_THREAD_NAME_LEN   16
 
@@ -118,3 +120,5 @@ size_t virCHMonitorGetThreadInfo(virCHMonitorPtr mon, bool refresh,
 
 int virCHMonitorGetIOThreads(virCHMonitorPtr mon,
                             virDomainIOThreadInfoPtr **iothreads);
+
+int virCHMonitorGetInfo(virCHMonitorPtr mon, virJSONValuePtr *info);
