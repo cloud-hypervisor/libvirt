@@ -937,6 +937,7 @@ virCHMonitorRefreshThreadInfo(virCHMonitorPtr mon)
 
         VIR_INFO("VM PID: %d, TID %d, COMM: %s",
                 (int)vm->pid, (int)tids[i], data);
+        info[i].tid = tids[i];
         if (STRPREFIX(data, "vcpu")) {
             int index;
             if ((index = strtol(data + 4, NULL, 0)) < 0) {
@@ -944,17 +945,14 @@ virCHMonitorRefreshThreadInfo(virCHMonitorPtr mon)
                 continue;
             }
             info[i].type = virCHThreadTypeVcpu;
-            info[i].vcpuInfo.tid = tids[i];
             info[i].vcpuInfo.online = true;
             info[i].vcpuInfo.cpuid = index;
             VIR_INFO("vcpu%d -> tid: %d", index, tids[i]);
         } else if (STRPREFIX(data, "virtio")) {
             info[i].type = virCHThreadTypeIO;
-            info[i].ioInfo.tid = tids[i];
             strncpy(info[i].ioInfo.thrName, data, VIRCH_THREAD_NAME_LEN - 1);
         }else {
             info[i].type = virCHThreadTypeEmulator;
-            info[i].emuInfo.tid = tids[i];
             strncpy(info[i].emuInfo.thrName, data, VIRCH_THREAD_NAME_LEN - 1);
         }
         mon->nthreads++;
@@ -1019,7 +1017,7 @@ int virCHMonitorGetIOThreads(virCHMonitorPtr mon,
             if(VIR_ALLOC(iothreadinfo) < 0)
                 goto cleanup;
 
-            iothreadinfo->iothread_id = mon->threads[i].ioInfo.tid;
+            iothreadinfo->iothread_id = mon->threads[i].tid;
 
             if (!(map = virProcessGetAffinity(iothreadinfo->iothread_id)))
                 goto cleanup;

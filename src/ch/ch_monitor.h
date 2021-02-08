@@ -50,7 +50,6 @@ typedef virCHMonitorCPUInfo *virCHMonitorCPUInfoPtr;
 
 struct _virCHMonitorCPUInfo {
     int cpuid;
-    pid_t tid;
 
     bool online;
 };
@@ -60,7 +59,6 @@ typedef virCHMonitorEmuThreadInfo *virCHMonitorEmuThreadInfoPtr;
 
 struct _virCHMonitorEmuThreadInfo {
     char    thrName[VIRCH_THREAD_NAME_LEN];
-    pid_t   tid;
 };
 
 typedef struct _virCHMonitorIOThreadInfo virCHMonitorIOThreadInfo;
@@ -68,7 +66,6 @@ typedef virCHMonitorIOThreadInfo *virCHMonitorIOThreadInfoPtr;
 
 struct _virCHMonitorIOThreadInfo {
     char    thrName[VIRCH_THREAD_NAME_LEN];
-    pid_t   tid;
 };
 
 typedef struct _virCHMonitorThreadInfo virCHMonitorThreadInfo;
@@ -76,6 +73,7 @@ typedef virCHMonitorThreadInfo *virCHMonitorThreadInfoPtr;
 
 struct _virCHMonitorThreadInfo {
     virCHThreadType type;
+    pid_t   tid;
 
     union {
         virCHMonitorCPUInfo vcpuInfo;

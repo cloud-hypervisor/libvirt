@@ -293,7 +293,7 @@ virCHDomainRefreshThreadInfo(virDomainObjPtr vm)
         vcpuInfo = &info[i].vcpuInfo;
         vcpu = virDomainDefGetVcpu(vm->def, vcpuInfo->cpuid);
         vcpupriv = CH_DOMAIN_VCPU_PRIVATE(vcpu);
-        vcpupriv->tid = vcpuInfo->tid;
+        vcpupriv->tid = info[i].tid;
         ncpus++;
     }
 

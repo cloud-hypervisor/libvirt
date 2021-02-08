@@ -35,6 +35,4 @@ int virCHProcessSetupVcpu(virDomainObjPtr vm,
 int virCHProcessSetupIOThread(virDomainObjPtr vm,
                              virDomainIOThreadInfoPtr iothread);
 
-int
-virCHProcessSetupEmulatorThread(virDomainObjPtr vm,
-                         virCHMonitorEmuThreadInfo emuthread);
+int virCHProcessSetupEmulatorThread(virDomainObjPtr vm, pid_t tid);

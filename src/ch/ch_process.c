@@ -267,10 +267,9 @@ virCHProcessSetupIOThreads(virDomainObjPtr vm)
 
 
 int
-virCHProcessSetupEmulatorThread(virDomainObjPtr vm,
-                         virCHMonitorEmuThreadInfo emuthread)
+virCHProcessSetupEmulatorThread(virDomainObjPtr vm, pid_t tid)
 {
-    return virCHProcessSetupPid(vm, emuthread.tid, VIR_CGROUP_THREAD_EMULATOR,
+    return virCHProcessSetupPid(vm, tid, VIR_CGROUP_THREAD_EMULATOR,
                                0, vm->def->cputune.emulatorpin,
                                vm->def->cputune.emulator_period,
                                vm->def->cputune.emulator_quota,
@@ -291,10 +290,10 @@ virCHProcessSetupEmulatorThreads(virDomainObjPtr vm)
     */
     for (i=0; i < priv->monitor->nthreads; i++) {
         if (priv->monitor->threads[i].type == virCHThreadTypeEmulator) {
-            VIR_DEBUG("Setup tid = %d (%s) Emulator thread", priv->monitor->threads[i].emuInfo.tid,
+            VIR_DEBUG("Setup tid = %d (%s) Emulator thread", priv->monitor->threads[i].tid,
                 priv->monitor->threads[i].emuInfo.thrName);
 
-            if (virCHProcessSetupEmulatorThread(vm, priv->monitor->threads[i].emuInfo ) < 0)
+            if (virCHProcessSetupEmulatorThread(vm, priv->monitor->threads[i].tid) < 0)
                 return -1;
         }
     }
