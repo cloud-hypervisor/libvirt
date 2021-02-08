@@ -900,9 +900,30 @@ virCHMonitorResumeVM(virCHMonitorPtr mon)
 static void
 virCHMonitorThreadInfoFree(virCHMonitorPtr mon)
 {
-    mon->nthreads = 0;
     if (mon->threads)
         VIR_FREE(mon->threads);
+    mon->threads = NULL;
+    mon->nthreads = 0;
+}
+
+static int
+virCHMonitorTidSortOrder(const void *a, const void *b)
+{
+    return *(pid_t *)a - *(pid_t *)b;
+}
+
+static bool
+virCHMonitorThreadInfoChanged(virCHMonitorPtr mon, pid_t *tids,
+        size_t ntids) {
+    if (!mon->nthreads || mon->nthreads != ntids)
+        return true;
+
+    for (int i = 0; i < ntids; i++) {
+        if (tids[i] != mon->threads[i].tid)
+            return true;
+    }
+
+    return false;
 }
 
 static size_t
@@ -914,12 +935,18 @@ virCHMonitorRefreshThreadInfo(virCHMonitorPtr mon)
     size_t ntids = 0;
     size_t i;
 
-
-    virCHMonitorThreadInfoFree(mon);
     if (virProcessGetPids(vm->pid, &ntids, &tids) < 0) {
-        mon->threads = NULL;
+        virCHMonitorThreadInfoFree(mon);
+        return -1;
+    }
+
+    qsort(tids, ntids, sizeof(pid_t), virCHMonitorTidSortOrder);
+
+    if (!virCHMonitorThreadInfoChanged(mon, tids, ntids)) {
         return 0;
     }
+
+    virCHMonitorThreadInfoFree(mon);
 
     if (VIR_ALLOC_N(info, ntids) < 0)
         return -1;
@@ -928,16 +955,18 @@ virCHMonitorRefreshThreadInfo(virCHMonitorPtr mon)
         g_autofree char *proc = NULL;
         g_autofree char *data = NULL;
 
+        info[i].tid = tids[i];
+
         proc = g_strdup_printf("/proc/%d/task/%d/comm",
                 (int)vm->pid, (int)tids[i]);
 
         if (virFileReadAll(proc, (1<<16), &data) < 0) {
+            info[i].type = virCHThreadTypeUnknown;
             continue;
         }
 
         VIR_INFO("VM PID: %d, TID %d, COMM: %s",
                 (int)vm->pid, (int)tids[i], data);
-        info[i].tid = tids[i];
         if (STRPREFIX(data, "vcpu")) {
             int index;
             if ((index = strtol(data + 4, NULL, 0)) < 0) {
@@ -955,12 +984,10 @@ virCHMonitorRefreshThreadInfo(virCHMonitorPtr mon)
             info[i].type = virCHThreadTypeEmulator;
             strncpy(info[i].emuInfo.thrName, data, VIRCH_THREAD_NAME_LEN - 1);
         }
-        mon->nthreads++;
-
     }
 
-
     mon->threads = info;
+    mon->nthreads = ntids;
 
     return mon->nthreads;
 }
