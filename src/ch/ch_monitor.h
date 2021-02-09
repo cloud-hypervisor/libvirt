@@ -112,6 +112,7 @@ int virCHMonitorRebootVM(virCHMonitorPtr mon);
 int virCHMonitorSuspendVM(virCHMonitorPtr mon);
 int virCHMonitorResumeVM(virCHMonitorPtr mon);
 
+ssize_t virCHMonitorRefreshThreadInfo(virCHMonitorPtr mon);
 size_t virCHMonitorGetThreadInfo(virCHMonitorPtr mon, bool refresh,
                                  virCHMonitorThreadInfoPtr *threads);
 

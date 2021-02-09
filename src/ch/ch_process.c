@@ -326,6 +326,46 @@ virCHProcessSetupVcpu(virDomainObjPtr vm,
 }
 
 static int
+virCHProcessSetupVcpuPids(virDomainObjPtr vm)
+{
+    size_t maxvcpus = virDomainDefGetVcpusMax(vm->def);
+    virCHMonitorThreadInfoPtr info = NULL;
+    size_t nthreads, ncpus = 0;
+    size_t i;
+
+    nthreads = virCHMonitorGetThreadInfo(virCHDomainGetMonitor(vm),
+                                         false, &info);
+    for (i = 0; i < nthreads; i++) {
+        virCHDomainVcpuPrivatePtr vcpupriv;
+        virDomainVcpuDefPtr vcpu;
+        virCHMonitorCPUInfoPtr vcpuInfo;
+
+        if (info[i].type != virCHThreadTypeVcpu)
+            continue;
+
+        // TODO: hotplug support
+        vcpuInfo = &info[i].vcpuInfo;
+        vcpu = virDomainDefGetVcpu(vm->def, vcpuInfo->cpuid);
+        vcpupriv = CH_DOMAIN_VCPU_PRIVATE(vcpu);
+        vcpupriv->tid = info[i].tid;
+        ncpus++;
+    }
+
+    // TODO: Remove the warning when hotplug is implemented.
+    if (ncpus != maxvcpus)
+        VIR_WARN("Mismatch in the number of cpus, expected: %ld, actual: %ld",
+                 maxvcpus, ncpus);
+
+    return 0;
+}
+
+/*
+ * Sets up vcpu's affinity, quota limits etc.
+ * Assumes that vm alread has all the vcpu pid
+ * information(virCHMonitorRefreshThreadInfo has been
+ * called before this function)
+ */
+static int
 virCHProcessSetupVcpus(virDomainObjPtr vm)
 {
     virDomainVcpuDefPtr vcpu;
@@ -339,6 +379,8 @@ virCHProcessSetupVcpus(virDomainObjPtr vm)
                        _("cgroup cpu is required for scheduler tuning"));
         return -1;
     }
+
+    virCHProcessSetupVcpuPids(vm);
 
     if (!virCHDomainHasVcpuPids(vm)) {
         /* If any CPU has custom affinity that differs from the
@@ -519,7 +561,7 @@ int virCHProcessStart(virCHDriverPtr driver,
         goto cleanup;
     }
 
-    virCHDomainRefreshThreadInfo(vm);
+    virCHMonitorRefreshThreadInfo(priv->monitor);
 
     VIR_DEBUG("Setting emulator tuning/settings");
     if (virCHProcessSetupEmulatorThreads(vm) < 0)

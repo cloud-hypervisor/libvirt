@@ -926,7 +926,7 @@ virCHMonitorThreadInfoChanged(virCHMonitorPtr mon, pid_t *tids,
     return false;
 }
 
-static size_t
+ssize_t
 virCHMonitorRefreshThreadInfo(virCHMonitorPtr mon)
 {
     virCHMonitorThreadInfoPtr info = NULL;
@@ -1005,7 +1005,7 @@ size_t
 virCHMonitorGetThreadInfo(virCHMonitorPtr mon, bool refresh,
                           virCHMonitorThreadInfoPtr *threads)
 {
-    int nthreads = 0;
+    int nthreads = mon->nthreads;
 
     if (refresh)
         nthreads = virCHMonitorRefreshThreadInfo(mon);

@@ -270,41 +270,6 @@ virCHDomainGetMonitor(virDomainObjPtr vm)
     return CH_DOMAIN_PRIVATE(vm)->monitor;
 }
 
-int
-virCHDomainRefreshThreadInfo(virDomainObjPtr vm)
-{
-    size_t maxvcpus = virDomainDefGetVcpusMax(vm->def);
-    virCHMonitorThreadInfoPtr info = NULL;
-    size_t nthreads, ncpus = 0;
-    size_t i;
-
-    nthreads = virCHMonitorGetThreadInfo(virCHDomainGetMonitor(vm),
-                                         true, &info);
-
-    for (i = 0; i < nthreads; i++) {
-        virCHDomainVcpuPrivatePtr vcpupriv;
-        virDomainVcpuDefPtr vcpu;
-        virCHMonitorCPUInfoPtr vcpuInfo;
-
-        if (info[i].type != virCHThreadTypeVcpu)
-            continue;
-
-        // TODO: hotplug support
-        vcpuInfo = &info[i].vcpuInfo;
-        vcpu = virDomainDefGetVcpu(vm->def, vcpuInfo->cpuid);
-        vcpupriv = CH_DOMAIN_VCPU_PRIVATE(vcpu);
-        vcpupriv->tid = info[i].tid;
-        ncpus++;
-    }
-
-    // TODO: Remove the warning when hotplug is implemented.
-    if (ncpus != maxvcpus)
-        VIR_WARN("Mismatch in the number of cpus, expected: %ld, actual: %ld",
-                 maxvcpus, ncpus);
-
-    return 0;
-}
-
 pid_t
 virCHDomainGetVcpuPid(virDomainObjPtr vm,
                      unsigned int vcpuid)
