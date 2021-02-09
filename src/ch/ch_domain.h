@@ -71,6 +71,9 @@ struct _virCHDomainObjPrivate {
 
     size_t tapfdSize;
     int *tapfd;
+
+    virThread vmThreadWatcher;
+    int vmThreadWatcherStop;
 };
 
 #define CH_DOMAIN_PRIVATE(vm) \

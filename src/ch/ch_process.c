@@ -420,7 +420,9 @@ static int virCHProcessSetupThreads(virDomainObjPtr vm)
     virCHDomainObjPrivatePtr priv = vm->privateData;
     int ret;
 
-    virCHMonitorRefreshThreadInfo(priv->monitor);
+    ret = virCHMonitorRefreshThreadInfo(priv->monitor);
+    if (ret <= 0)
+        return ret;
 
     VIR_DEBUG("Setting emulator tuning/settings");
     ret = virCHProcessSetupEmulatorThreads(vm);
@@ -436,6 +438,87 @@ static int virCHProcessSetupThreads(virDomainObjPtr vm)
     }
 
     return ret;
+}
+
+/*
+ * Procfs Thread watcher
+ * This thread is started when a Domain boots up and
+ * exists as long as the domain is active. The duty
+ * of the thread is to watch for any tid changes for
+ * the VM and then update the cgroups accordingly.
+ * Threads can change in the case of following events:
+ * - VM reboot
+ * - Device activation
+ *
+ * TODO: Parsing procfs frequently is ugly and not scalable
+ *       Better option would be to have cloud-hypervisor
+ *       return the thread information via API query or
+ *       probably to have a monitor interface like what
+ *       qemu has.
+ */
+
+/*
+ * Hard coding the polling interval for the watcher thread
+ * to be 1 second.
+ */
+#define THREAD_WATCHER_POLL_INTERVAL    G_USEC_PER_SEC
+
+static void chProcessWatchThreads(void *data)
+{
+    virDomainObjPtr vm = (virDomainObjPtr)data;
+    virCHDomainObjPrivatePtr priv;
+
+    VIR_DEBUG("VM Thread watcher starting");
+
+    virObjectLock(vm);
+    priv = vm->privateData;
+    while (g_atomic_int_get(&priv->vmThreadWatcherStop) == 0 &&
+           virDomainObjIsActive(vm)) {
+
+        if (virCHDomainObjBeginJob(vm, CH_JOB_MODIFY) < 0) {
+            VIR_WARN("VRP: Failed to Lock vm state");
+        } else {
+            virCHProcessSetupThreads(vm);
+            virCHDomainObjEndJob(vm);
+        }
+
+        virObjectUnlock(vm);
+        g_usleep(G_USEC_PER_SEC);
+        virObjectLock(vm);
+    }
+    VIR_DEBUG("VM Thread watcher exiting");
+
+    virDomainObjEndAPI(&vm);
+    return;
+}
+
+static int virCHProcessStartWatchThreads(virDomainObjPtr vm)
+{
+    virCHDomainObjPrivatePtr priv = vm->privateData;
+    g_autofree char *name = NULL;
+
+    name = g_strdup_printf("threadwatcher-%d", vm->pid);
+
+    virObjectRef(vm);
+    if (virThreadCreateFull(&priv->vmThreadWatcher,
+                            false,
+                            chProcessWatchThreads,
+                            name,
+                            false,
+                            vm) < 0) {
+        virObjectUnref(vm);
+        return -1;
+
+    }
+
+    g_atomic_int_set(&priv->vmThreadWatcherStop, 0);
+    return 0;
+}
+
+static void virCHProcessStopWatchThreads(virDomainObjPtr vm)
+{
+    virCHDomainObjPrivatePtr priv = vm->privateData;
+    g_atomic_int_set(&priv->vmThreadWatcherStop, 1);
 }
 
 /**
@@ -593,6 +676,10 @@ int virCHProcessStart(virCHDriverPtr driver,
     if (chSetupGlobalCpuCgroup(vm) < 0)
         goto cleanup;
 
+    VIR_DEBUG("Starting the thread watcher thread");
+    if (virCHProcessStartWatchThreads(vm) < 0)
+        goto cleanup;
+
     virDomainObjSetState(vm, VIR_DOMAIN_RUNNING, reason);
 
     return 0;
@@ -614,6 +701,8 @@ int virCHProcessStop(virCHDriverPtr driver G_GNUC_UNUSED,
 
     VIR_DEBUG("Stopping VM name=%s pid=%d reason=%d",
               vm->def->name, (int)vm->pid, (int)reason);
+
+    virCHProcessStopWatchThreads(vm);
 
     if (priv->monitor) {
         virCHMonitorClose(priv->monitor);
