@@ -415,6 +415,29 @@ virCHProcessSetupVcpus(virDomainObjPtr vm)
     return 0;
 }
 
+static int virCHProcessSetupThreads(virDomainObjPtr vm)
+{
+    virCHDomainObjPrivatePtr priv = vm->privateData;
+    int ret;
+
+    virCHMonitorRefreshThreadInfo(priv->monitor);
+
+    VIR_DEBUG("Setting emulator tuning/settings");
+    ret = virCHProcessSetupEmulatorThreads(vm);
+
+    if (!ret) {
+        VIR_DEBUG("Setting iothread tuning/settings");
+        ret = virCHProcessSetupIOThreads(vm);
+    }
+
+    if (!ret) {
+        VIR_DEBUG("Setting vCPU tuning/settings");
+        ret = virCHProcessSetupVcpus(vm);
+    }
+
+    return ret;
+}
+
 /**
  * chProcessNetworkPrepareDevices
  */
@@ -563,20 +586,11 @@ int virCHProcessStart(virCHDriverPtr driver,
 
     virCHMonitorRefreshThreadInfo(priv->monitor);
 
-    VIR_DEBUG("Setting emulator tuning/settings");
-    if (virCHProcessSetupEmulatorThreads(vm) < 0)
-        goto cleanup;
-
-    VIR_DEBUG("Setting iothread tuning/settings");
-    if (virCHProcessSetupIOThreads(vm) < 0)
+    if (virCHProcessSetupThreads(vm) < 0)
         goto cleanup;
 
     VIR_DEBUG("Setting global CPU cgroup (if required)");
     if (chSetupGlobalCpuCgroup(vm) < 0)
-        goto cleanup;
-
-    VIR_DEBUG("Setting vCPU tuning/settings");
-    if (virCHProcessSetupVcpus(vm) < 0)
         goto cleanup;
 
     virDomainObjSetState(vm, VIR_DOMAIN_RUNNING, reason);
