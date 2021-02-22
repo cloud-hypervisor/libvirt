@@ -21,6 +21,8 @@
 #include <config.h>
 
 #include <stdio.h>
+#include <unistd.h>
+
 #include <curl/curl.h>
 
 #include "ch_conf.h"
@@ -595,14 +597,15 @@ virCHMonitorOpen(virDomainObjPtr vm, virCHDriverPtr driver)
 virCHMonitorPtr
 virCHMonitorNew(virDomainObjPtr vm, virCHDriverPtr driver)
 {
-    virCHDomainObjPrivatePtr priv = vm->privateData;
     g_autoptr(virCHDriverConfig) cfg = virCHDriverGetConfig(driver);
+    virCHDomainObjPrivatePtr priv = vm->privateData;
     virCHMonitorPtr ret = NULL;
     virCHMonitorPtr mon = NULL;
     virCommandPtr cmd = NULL;
-    int i;
+    int monitor_fds[2];
     int pings = 0;
     int rv;
+    int i;
 
     if (virCHMonitorInitialize() < 0)
         goto cleanup;
@@ -628,6 +631,17 @@ virCHMonitorNew(virDomainObjPtr vm, virCHDriverPtr driver)
         virCommandPassFD(cmd, priv->tapfd[i],
                          VIR_COMMAND_PASS_FD_CLOSE_PARENT);
     }
+
+    /* Monitor fd to listen for VM state changes */
+    if (pipe(monitor_fds) < 0) {
+        virReportSystemError(errno, "%s",
+                             _("Cannot create monitor fd pipe"));
+        goto cleanup;
+    }
+    mon->monitor_fd = monitor_fds[0];
+    virCommandAddArg(cmd, "--monitor-fd");
+    virCommandAddArgFormat(cmd, "%d", monitor_fds[1]);
+    virCommandPassFD(cmd, monitor_fds[1], VIR_COMMAND_PASS_FD_CLOSE_PARENT);
 
     /* TODO enable */
     virCommandSetPidFile(cmd, priv->pidfile);
@@ -724,6 +738,10 @@ void virCHMonitorClose(virCHMonitorPtr mon)
                      mon->socketpath);
         }
         VIR_FREE(mon->socketpath);
+    }
+
+    if (mon->monitor_fd) {
+        close(mon->monitor_fd);
     }
 
     virObjectUnref(mon);
