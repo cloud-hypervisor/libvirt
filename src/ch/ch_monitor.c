@@ -28,6 +28,7 @@
 #include "ch_conf.h"
 #include "ch_domain.h"
 #include "ch_monitor.h"
+#include "ch_process.h"
 #include "viralloc.h"
 #include "vircommand.h"
 #include "virerror.h"
@@ -562,6 +563,61 @@ chMonitorBuildSocketCmd(virDomainObjPtr vm, const char *socket_path)
     return cmd;
 }
 
+static void virCHMonitorEventLoop(void *data)
+{
+    virCHMonitorPtr mon = (virCHMonitorPtr)data;
+    virDomainObjPtr vm = mon->vm;
+
+    VIR_DEBUG("Monitor event loop thread starting");
+
+    virObjectRef(vm);
+    while (g_atomic_int_get(&mon->event_loop_stop) == 0) {
+
+        g_usleep(G_USEC_PER_SEC);
+
+        virObjectLock(vm);
+        if (virDomainObjIsActive(vm) &&
+            virCHDomainObjBeginJob(vm, CH_JOB_MODIFY) == 0) {
+            virCHProcessSetupThreads(vm);
+            virCHDomainObjEndJob(vm);
+        }
+        virObjectUnlock(vm);
+    }
+    virObjectUnref(vm);
+
+    VIR_DEBUG("Monitor event loop thread exiting");
+
+    virObjectUnref(mon);
+    return;
+}
+
+static int virCHMonitorStartEventLoop(virCHMonitorPtr mon)
+{
+    g_autofree char *name = NULL;
+
+    name = g_strdup_printf("mon-events-%d", mon->pid);
+
+    virObjectRef(mon);
+    if (virThreadCreateFull(&mon->event_loop_thread,
+                            false,
+                            virCHMonitorEventLoop,
+                            name,
+                            false,
+                            mon) < 0) {
+        virObjectUnref(mon);
+        return -1;
+
+    }
+
+    g_atomic_int_set(&mon->event_loop_stop, 0);
+    return 0;
+}
+
+static void virCHMonitorStopEventLoop(virCHMonitorPtr mon)
+{
+    g_atomic_int_set(&mon->event_loop_stop, 1);
+}
+
 virCHMonitorPtr
 virCHMonitorOpen(virDomainObjPtr vm, virCHDriverPtr driver)
 {
@@ -698,6 +754,10 @@ virCHMonitorNew(virDomainObjPtr vm, virCHDriverPtr driver)
     if (virDomainObjSave(vm, driver->xmlopt, cfg->stateDir) < 0)
         goto cleanup;
 
+    if (virCHMonitorStartEventLoop(mon) < 0) {
+        goto cleanup;
+    }
+
     /* now has its own reference */
     virObjectRef(mon);
     mon->vm = virObjectRef(vm);
@@ -743,6 +803,8 @@ void virCHMonitorClose(virCHMonitorPtr mon)
     if (mon->monitor_fd) {
         close(mon->monitor_fd);
     }
+
+    virCHMonitorStopEventLoop(mon);
 
     virObjectUnref(mon);
     if (mon->vm)
@@ -1109,10 +1171,14 @@ virCHMonitorRefreshThreadInfo(virCHMonitorPtr mon)
 {
     virCHMonitorThreadInfoPtr info = NULL;
     g_autofree pid_t *tids = NULL;
-    virDomainObjPtr vm = mon->vm;
+    virDomainObjPtr vm;
     size_t ntids = 0;
     size_t i;
 
+    if (!mon)
+        return -1;
+
+    vm = mon->vm;
     if (virProcessGetPids(vm->pid, &ntids, &tids) < 0) {
         virCHMonitorThreadInfoFree(mon);
         return -1;
