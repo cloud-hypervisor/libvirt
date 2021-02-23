@@ -85,6 +85,44 @@ struct _virCHMonitorThreadInfo {
     };
 };
 
+typedef enum {
+    /* source: vmm */
+    virCHMonitorVmmEventStarting = 0,
+    virCHMonitorVmmEventShutdown,
+
+    /* source: vm */
+    virCHMonitorVmEventBooting,
+    virCHMonitorVmEventBooted,
+    virCHMonitorVmEventPausing,
+    virCHMonitorVmEventPaused,
+    virCHMonitorVmEventResuming,
+    virCHMonitorVmEventResumed,
+    virCHMonitorVmEventSnapshotting,
+    virCHMonitorVmEventSnapshotted,
+    virCHMonitorVmEventRestoring,
+    virCHMonitorVmEventRestored,
+    virCHMonitorVmEventResizing,
+    virCHMonitorVmEventResized,
+    virCHMonitorVmEventShutdown,
+    virCHMonitorVmEventDeleted,
+
+    /* source: cpu_manager */
+    virCHMonitorCpuCreateVcpu,
+
+    /* source: virtio-device */
+    virCHMonitorVirtioDeviceEventActivated,
+    virCHMonitorVirtioDeviceEventReset,
+
+    virCHMonitorEventMax
+} virCHMonitorEvent;
+
+/*
+ * Size of the buffer used to read the
+ * monitor events. Hard coded to max
+ * size of the pipe.
+ */
+#define CH_MONITOR_BUFFER_SZ    PIPE_BUF
+
 typedef struct _virCHMonitor virCHMonitor;
 typedef virCHMonitor *virCHMonitorPtr;
 
@@ -96,6 +134,13 @@ struct _virCHMonitor {
     char *socketpath;
 
     int monitor_fd;
+    // Buffer to hold the data read from pipe
+    char *buffer;
+    // Offset to which new data from pipe has to be read.
+    size_t buf_offset;
+    // Size of the data read from pipe in buffer 
+    size_t buf_fill_sz;
+
     virThread event_loop_thread;
     int event_loop_stop;
 

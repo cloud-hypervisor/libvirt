@@ -22,6 +22,7 @@
 
 #include <stdio.h>
 #include <unistd.h>
+#include <assert.h>
 
 #include <curl/curl.h>
 
@@ -563,6 +564,316 @@ chMonitorBuildSocketCmd(virDomainObjPtr vm, const char *socket_path)
     return cmd;
 }
 
+static const char *virCHMonitorEventStrings[] = {
+    "vmm:starting",
+    "vmm:shutdown",
+    "vm:booting", "vm:booted",
+    "vm:pausing", "vm:paused",
+    "vm:resuming", "vm:resumed",
+    "vm:snapshotting", "vm:snapshotted",
+    "vm:restoring", "vm:restored",
+    "vm:resizing", "vm:resized",
+    "vm:shutdown", "vm:deleted",
+    "cpu_manager:create_vcpu",
+    "virtio-device:activated", "virtio-device:reset"
+};
+
+static virCHMonitorEvent virCHMonitorEventFromString(const char *sourceStr,
+        const char *eventStr)
+{
+    int i;
+    g_auto(virBuffer) buf = VIR_BUFFER_INITIALIZER;
+    const char *event;
+
+    virBufferAsprintf(&buf, "%s:%s", sourceStr, eventStr);
+    event = virBufferCurrentContent(&buf);
+
+    for (i = 0; i < virCHMonitorEventMax; i++) {
+        if STREQ(event, virCHMonitorEventStrings[i])
+            break;
+    }
+
+    return i;
+}
+
+static int virCHMonitorValidateEventsJSON(char *buffer, size_t sz,
+            bool *incomplete)
+{
+    /*
+     * Marks the start of a JSON doc(starting with '{')
+     */
+    char *json_start = buffer;
+    /*
+     * Marks the start of the buffer where the scan starts.
+     * It could be either:
+     *      - Start of the buffer. Or
+     *      - Next location after a valid JSON doc.
+     */
+    char *scan_start = buffer;
+    int blocks = 0;
+    int events = 0;
+    int i = 0;
+
+    if (sz == 0)
+        return 0;
+
+    /*
+     * Check if the message is a wellformed JSON. Try to find all
+     * wellformed JSON doc and adjust the buffer accordingly by
+     * removing invalid snippets in the buffer.
+     */
+    do {
+        if (buffer[i] == '{') {
+            blocks++;
+
+            if (blocks != 1)
+                continue;
+
+            /*
+             * Possible start of a valid JSON doc. Check if
+             * there were any white characters or garbage
+             * before the JSON doc at this location.
+             */
+            json_start = buffer + i;
+            if (scan_start != json_start) {
+                int invalid_chars = json_start - scan_start;
+                VIR_WARN("invalid json or white chars in buffer: %.*s",
+                         invalid_chars, scan_start);
+                memmove(scan_start, json_start, invalid_chars);
+            }
+        } else if (buffer[i] == '}' && blocks != 0) {
+            blocks--;
+            if (blocks == 0) {
+                events++;
+                /*
+                 * This location marks the end of a valid JSON doc.
+                 * Reset the scan_start to next location.
+                 */
+                scan_start = buffer + i + 1;
+            }
+        }
+    } while (++i < sz);
+
+    *incomplete = blocks != 0 ? true : false;
+    VIR_DEBUG("Total events received: %d, incomplete: %d",
+              events, *incomplete);
+
+    return events;
+}
+
+/*
+ * Caller should have reference on Monitor and Domain
+ */
+static int virCHMonitorProcessEvent(virCHMonitorPtr mon,
+            virJSONValuePtr eventJSON)
+{
+    const char *event;
+    const char *source;
+    virDomainObjPtr vm = mon->vm;
+    virCHMonitorEvent ev;
+
+    if (virJSONValueObjectHasKey(eventJSON, "source") == 0) {
+        VIR_WARN("Invalid JSON from monitor, no source key");
+        return -1;
+    }
+    if (virJSONValueObjectHasKey(eventJSON, "event") == 0) {
+        VIR_WARN("Invalid JSON from monitor, no event key");
+        return -1;
+    }
+    source = virJSONValueObjectGetString(eventJSON, "source");
+    event = virJSONValueObjectGetString(eventJSON, "event");
+
+    ev = virCHMonitorEventFromString(source, event);
+    VIR_DEBUG("Source: %s Event: %s, ev: %d", source, event, ev);
+    switch (ev) {
+        case virCHMonitorVmEventBooted:
+        case virCHMonitorVmEventResumed:
+        case virCHMonitorVmEventRestored:
+        case virCHMonitorVirtioDeviceEventActivated:
+        case virCHMonitorVirtioDeviceEventReset:
+            virObjectLock(vm);
+            if (virDomainObjIsActive(vm) &&
+                   virCHDomainObjBeginJob(vm, CH_JOB_MODIFY) == 0) {
+                virCHProcessSetupThreads(vm);
+                virCHDomainObjEndJob(vm);
+            }
+            virObjectUnlock(vm);
+            break;
+        case virCHMonitorVmmEventShutdown: // shutdown inside vmm
+        case virCHMonitorVmEventShutdown:
+            {
+                virCHDriverPtr driver = CH_DOMAIN_PRIVATE(vm)->driver;
+                virDomainState state;
+
+                virObjectLock(vm);
+                state = virDomainObjGetState(vm, NULL);
+                if ((ev == virCHMonitorVmmEventShutdown ||
+                     state == VIR_DOMAIN_SHUTDOWN) &&
+                      (virCHDomainObjBeginJob(vm, CH_JOB_MODIFY) == 0)) {
+
+                    virCHProcessStop(driver, vm, VIR_DOMAIN_SHUTOFF_SHUTDOWN);
+
+                    virCHDomainObjEndJob(vm);
+                }
+                virObjectUnlock(vm);
+                break;
+            }
+        case virCHMonitorVmEventBooting:
+        case virCHMonitorVmEventPausing:
+        case virCHMonitorVmEventPaused:
+        case virCHMonitorVmEventResuming:
+        case virCHMonitorVmEventSnapshotting:
+        case virCHMonitorVmEventSnapshotted:
+        case virCHMonitorVmEventRestoring:
+        case virCHMonitorVmEventResizing:
+        case virCHMonitorVmEventResized:
+        case virCHMonitorVmEventDeleted:
+        case virCHMonitorVmmEventStarting:
+        case virCHMonitorCpuCreateVcpu:
+            break;
+        case virCHMonitorEventMax:
+        default:
+            VIR_WARN("unkown event from monitor!");
+            break;
+    }
+
+    return 0;
+}
+
+/*
+ * Helper function to find a block of valid JSON
+ * from a stream of multiple JSON blocks.
+ */
+static inline char *end_of_json(char *str, size_t len)
+{
+    bool started = false;
+    int blocks = 0;
+    int i = 0;
+
+    while ((i < len) && (!started || blocks > 0)) {
+        if (str[i] == '{') {
+            if (!started)
+                started = true;
+            blocks++;
+        } else if (str[i] == '}') {
+            blocks--;
+        }
+        i++;
+    }
+
+    return (i == len && blocks) ? NULL : str + i;
+}
+
+/*
+ * Caller should have reference on Monitor and Domain
+ */
+static int virCHMonitorProcessEvents(virCHMonitorPtr mon, int events)
+{
+    virJSONValuePtr obj = NULL;
+    char *buf = mon->buffer;
+    int ret = 0;
+    int i = 0;
+    size_t sz;
+
+    for (i = 0; i < events; i++) {
+        char tmp;
+        char *end = end_of_json(buf, mon->buf_fill_sz);
+
+        /*
+         * end should never be NULL! We validated that there
+         * is a valid JSON document before calling end_of_json,
+         * and end_of_json returns NULL only if it cannot find
+         * a valid JSON document.
+         */
+        assert(end);
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wnull-dereference"
+        tmp = *end, *end = 0;
+#pragma GCC diagnostic pop
+
+        if ((obj = virJSONValueFromString(buf))) {
+            if (virCHMonitorProcessEvent(mon, obj) < 0) {
+                VIR_WARN("Failed to process the event!");
+                ret = -1;
+            }
+            virJSONValueFree(obj);
+        } else {
+            VIR_WARN("Invalid JSON from monitor");
+            ret = -1;
+        }
+
+        *end = tmp;
+        buf = end;
+    }
+
+    /*
+     * If the buffer still has incomplete data, lets
+     * push it to the beginning.
+     */
+    sz = buf - mon->buffer;
+    if (sz < mon->buf_fill_sz) {
+        mon->buf_offset = mon->buf_fill_sz - sz;
+        memmove(mon->buffer, buf, sz);
+    } else {
+        mon->buf_offset = 0;
+    }
+
+    return ret;
+}
+
+static int virCHMonitorReadProcessEvents(virCHMonitorPtr mon)
+{
+    size_t max_sz = CH_MONITOR_BUFFER_SZ - mon->buf_offset;
+    char *buf = mon->buffer + mon->buf_offset;
+    virDomainObjPtr vm = mon->vm;
+    bool incomplete = false;
+    int events = 0;
+    size_t sz = 0;
+
+    memset(buf, 0, max_sz);
+    do {
+        ssize_t ret;
+
+        ret = read(mon->monitor_fd, buf + sz, max_sz - sz);
+        if (ret == 0 || (ret < 0 && errno == EINTR)) {
+            g_usleep(G_USEC_PER_SEC);
+            continue;
+        } else if (ret < 0) {
+            /*
+             * We should never reach here. read(2) says possible errors
+             * are EINTR, EAGAIN, EBADF, EFAULT, EINVAL, EIO, EISDIR
+             * We handle EINTR gracefully. There is some serious issue
+             * if we encounter any of the other errors(either in our code
+             * or in the system). Better to bail out.
+             */
+            VIR_ERROR("Failed to read monitor events!: %s", strerror(errno));
+            abort();
+        }
+
+        sz += ret;
+        events = virCHMonitorValidateEventsJSON(mon->buffer,
+                        mon->buf_offset + sz, &incomplete);
+        VIR_DEBUG("Monitor event(%ld):\n%s", sz, mon->buffer);
+
+    } while (virDomainObjIsActive(vm) && (sz < max_sz) &&
+             (events == 0 || incomplete));
+
+    /*
+     * We process the events from the read buffer if
+     *    - There is atleast one event in the buffer
+     *    - No incomplete events in the buffer or
+     *    - The buffer is full and may have incomplete entries.
+     *
+     * If the buffer is full, virCHMonitorProcessEvents processes
+     * the completed events in the buffer and moves incomplete
+     * entries to the start of the buffer and next read from the pipe
+     * starts from the offset.
+     */
+    mon->buf_fill_sz = sz + mon->buf_offset;
+    return (events > 0) ? virCHMonitorProcessEvents(mon, events) : events;
+}
+
 static void virCHMonitorEventLoop(void *data)
 {
     virCHMonitorPtr mon = (virCHMonitorPtr)data;
@@ -570,18 +881,21 @@ static void virCHMonitorEventLoop(void *data)
 
     VIR_DEBUG("Monitor event loop thread starting");
 
+    mon->buffer = g_malloc_n(sizeof(char), CH_MONITOR_BUFFER_SZ);
+    mon->buf_offset = 0;
+    mon->buf_fill_sz = 0;
+
     virObjectRef(vm);
     while (g_atomic_int_get(&mon->event_loop_stop) == 0) {
-
-        g_usleep(G_USEC_PER_SEC);
-
-        virObjectLock(vm);
-        if (virDomainObjIsActive(vm) &&
-            virCHDomainObjBeginJob(vm, CH_JOB_MODIFY) == 0) {
-            virCHProcessSetupThreads(vm);
-            virCHDomainObjEndJob(vm);
-        }
-        virObjectUnlock(vm);
+        VIR_DEBUG("Reading events from monitor..");
+        /*
+         * virCHMonitorReadProcessEvents errors out only if
+         * virjson detects an invalid JSON doc and the buffer
+         * in that case is automatically taken care of. We can
+         * safely continue.
+         */
+        if (virCHMonitorReadProcessEvents(mon) < 0)
+            VIR_WARN("Failed to process events from monitor!");
     }
     virObjectUnref(vm);
 
@@ -793,7 +1107,8 @@ void virCHMonitorClose(virCHMonitorPtr mon)
         curl_easy_cleanup(mon->handle);
 
     if (mon->socketpath) {
-        if (virFileRemove(mon->socketpath, -1, -1) < 0) {
+        if (virFileExists(mon->socketpath) &&
+            virFileRemove(mon->socketpath, -1, -1) < 0) {
             VIR_WARN("Unable to remove CH socket file '%s'",
                      mon->socketpath);
         }
@@ -1209,7 +1524,7 @@ virCHMonitorRefreshThreadInfo(virCHMonitorPtr mon)
             continue;
         }
 
-        VIR_INFO("VM PID: %d, TID %d, COMM: %s",
+        VIR_DEBUG("VM PID: %d, TID %d, COMM: %s",
                 (int)vm->pid, (int)tids[i], data);
         if (STRPREFIX(data, "vcpu")) {
             int index;
@@ -1220,7 +1535,7 @@ virCHMonitorRefreshThreadInfo(virCHMonitorPtr mon)
             info[i].type = virCHThreadTypeVcpu;
             info[i].vcpuInfo.online = true;
             info[i].vcpuInfo.cpuid = index;
-            VIR_INFO("vcpu%d -> tid: %d", index, tids[i]);
+            VIR_DEBUG("vcpu%d -> tid: %d", index, tids[i]);
         } else if (STRPREFIX(data, "virtio")) {
             info[i].type = virCHThreadTypeIO;
             strncpy(info[i].ioInfo.thrName, data, VIRCH_THREAD_NAME_LEN - 1);

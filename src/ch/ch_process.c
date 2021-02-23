@@ -207,7 +207,7 @@ virCHProcessSetupPid(virDomainObjPtr vm,
             goto cleanup;
 
         /* Move the thread to the sub dir */
-        VIR_INFO("Adding pid %d to cgroup", pid);
+        VIR_DEBUG("Adding pid %d to cgroup", pid);
         if (virCgroupAddThread(cgroup, pid) < 0)
             goto cleanup;
 
