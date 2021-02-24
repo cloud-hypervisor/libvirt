@@ -416,6 +416,8 @@ static int
 chDomainShutdownFlags(virDomainPtr dom,
                       unsigned int flags)
 {
+    virCHDriverPtr driver = dom->conn->privateData;
+    g_autoptr(virCHDriverConfig) cfg = virCHDriverGetConfig(driver);
     virCHDomainObjPrivatePtr priv;
     virDomainObjPtr vm;
     virDomainState state;
@@ -452,6 +454,8 @@ chDomainShutdownFlags(virDomainPtr dom,
     }
 
     virDomainObjSetState(vm, VIR_DOMAIN_SHUTDOWN, VIR_DOMAIN_SHUTDOWN_USER);
+    if ((ret = virDomainObjSave(vm, driver->xmlopt, cfg->stateDir)))
+        goto cleanup;
 
     ret = 0;
 
