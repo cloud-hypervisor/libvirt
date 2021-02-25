@@ -703,6 +703,7 @@ static int virCHMonitorProcessEvent(virCHMonitorPtr mon,
         case virCHMonitorVmEventShutdown:
             {
                 virCHDriverPtr driver = CH_DOMAIN_PRIVATE(vm)->driver;
+                g_autoptr(virCHDriverConfig) cfg = virCHDriverGetConfig(driver);
                 virDomainState state;
 
                 virObjectLock(vm);
@@ -710,6 +711,9 @@ static int virCHMonitorProcessEvent(virCHMonitorPtr mon,
                 if ((ev == virCHMonitorVmmEventShutdown ||
                      state == VIR_DOMAIN_SHUTDOWN) &&
                       (virCHDomainObjBeginJob(vm, CH_JOB_MODIFY) == 0)) {
+
+                    if (virDomainObjSave(vm, driver->xmlopt, cfg->stateDir))
+                        VIR_WARN("Failed to persist the domain after shutdown!");
 
                     virCHProcessStop(driver, vm, VIR_DOMAIN_SHUTOFF_SHUTDOWN);
 
