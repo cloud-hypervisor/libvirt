@@ -596,20 +596,21 @@ static virCHMonitorEvent virCHMonitorEventFromString(const char *sourceStr,
     return i;
 }
 
-static int virCHMonitorValidateEventsJSON(char *buffer, size_t sz,
+static int virCHMonitorValidateEventsJSON(virCHMonitorPtr mon,
             bool *incomplete)
 {
     /*
      * Marks the start of a JSON doc(starting with '{')
      */
-    char *json_start = buffer;
+    char *json_start = mon->buffer;
     /*
      * Marks the start of the buffer where the scan starts.
      * It could be either:
      *      - Start of the buffer. Or
      *      - Next location after a valid JSON doc.
      */
-    char *scan_start = buffer;
+    char *scan_start = mon->buffer;
+    size_t sz = mon->buf_fill_sz;
     int blocks = 0;
     int events = 0;
     int i = 0;
@@ -623,7 +624,7 @@ static int virCHMonitorValidateEventsJSON(char *buffer, size_t sz,
      * removing invalid snippets in the buffer.
      */
     do {
-        if (buffer[i] == '{') {
+        if (mon->buffer[i] == '{') {
             blocks++;
 
             if (blocks != 1)
@@ -634,14 +635,17 @@ static int virCHMonitorValidateEventsJSON(char *buffer, size_t sz,
              * there were any white characters or garbage
              * before the JSON doc at this location.
              */
-            json_start = buffer + i;
+            json_start = mon->buffer + i;
             if (scan_start != json_start) {
                 int invalid_chars = json_start - scan_start;
                 VIR_WARN("invalid json or white chars in buffer: %.*s",
                          invalid_chars, scan_start);
-                memmove(scan_start, json_start, invalid_chars);
+                memmove(scan_start, json_start, sz - i);
+                memset(scan_start + sz - i, 0, invalid_chars);
+                i -= invalid_chars;
+                sz -= invalid_chars;
             }
-        } else if (buffer[i] == '}' && blocks != 0) {
+        } else if (mon->buffer[i] == '}' && blocks != 0) {
             blocks--;
             if (blocks == 0) {
                 events++;
@@ -649,14 +653,13 @@ static int virCHMonitorValidateEventsJSON(char *buffer, size_t sz,
                  * This location marks the end of a valid JSON doc.
                  * Reset the scan_start to next location.
                  */
-                scan_start = buffer + i + 1;
+                scan_start = mon->buffer + i + 1;
             }
         }
     } while (++i < sz);
 
     *incomplete = blocks != 0 ? true : false;
-    VIR_DEBUG("Total events received: %d, incomplete: %d",
-              events, *incomplete);
+    mon->buf_fill_sz = sz;
 
     return events;
 }
@@ -773,15 +776,15 @@ static inline char *end_of_json(char *str, size_t len)
  */
 static int virCHMonitorProcessEvents(virCHMonitorPtr mon, int events)
 {
+    ssize_t sz = mon->buf_fill_sz;
     virJSONValuePtr obj = NULL;
     char *buf = mon->buffer;
     int ret = 0;
     int i = 0;
-    size_t sz;
 
     for (i = 0; i < events; i++) {
         char tmp;
-        char *end = end_of_json(buf, mon->buf_fill_sz);
+        char *end = end_of_json(buf, sz);
 
         /*
          * end should never be NULL! We validated that there
@@ -790,11 +793,42 @@ static int virCHMonitorProcessEvents(virCHMonitorPtr mon, int events)
          * a valid JSON document.
          */
         assert(end);
+        assert(end <= buf + sz);
 
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wnull-dereference"
-        tmp = *end, *end = 0;
-#pragma GCC diagnostic pop
+        /*
+         * We may hit a corner case where a valid JSON
+         * doc happens to end right at the end of the buffer.
+         * virJSONValueFromString needs '\0' end the JSON doc.
+         * So we need to adjust the buffer accordingly.
+         */
+        if (end == mon->buffer + CH_MONITOR_BUFFER_SZ) {
+            if (buf == mon->buffer) {
+                /*
+                 * We have a valid JSON doc same as the buffer
+                 * size. As per protocol, max JSON doc should be
+                 * less than the buffer size. So this is an error.
+                 * Ignore this JSON doc.
+                 */
+                VIR_WARN("Invalid JSON doc size. Expected <= %d"
+                         ", actual %lu", CH_MONITOR_BUFFER_SZ, end - buf);
+                buf = end;
+                sz = 0;
+                break;
+            }
+
+            /*
+             * Move the valid JSON doc to the start of the buffer so
+             * that we can safely fit a '\0' at the end.
+             * Since end == mon->buffer + CH_MONITOR_BUFFER_SZ,
+             *  sz == end - buf
+             */
+            memmove(mon->buffer, buf, sz);
+            end = mon->buffer + sz;
+            buf = mon->buffer;
+            *end = tmp = 0;
+        } else {
+            tmp = *end, *end = 0;
+        }
 
         if ((obj = virJSONValueFromString(buf))) {
             if (virCHMonitorProcessEvent(mon, obj) < 0) {
@@ -807,6 +841,8 @@ static int virCHMonitorProcessEvents(virCHMonitorPtr mon, int events)
             ret = -1;
         }
 
+        sz -= end - buf;
+        assert(sz >= 0);
         *end = tmp;
         buf = end;
     }
@@ -815,9 +851,8 @@ static int virCHMonitorProcessEvents(virCHMonitorPtr mon, int events)
      * If the buffer still has incomplete data, lets
      * push it to the beginning.
      */
-    sz = buf - mon->buffer;
-    if (sz < mon->buf_fill_sz) {
-        mon->buf_offset = mon->buf_fill_sz - sz;
+    if (sz > 0) {
+        mon->buf_offset = sz;
         memmove(mon->buffer, buf, sz);
     } else {
         mon->buf_offset = 0;
@@ -856,9 +891,10 @@ static int virCHMonitorReadProcessEvents(virCHMonitorPtr mon)
         }
 
         sz += ret;
-        events = virCHMonitorValidateEventsJSON(mon->buffer,
-                        mon->buf_offset + sz, &incomplete);
-        VIR_DEBUG("Monitor event(%ld):\n%s", sz, mon->buffer);
+        mon->buf_fill_sz = sz + mon->buf_offset;
+        events = virCHMonitorValidateEventsJSON(mon, &incomplete);
+        VIR_DEBUG("Monitor event(size: %lu, events: %d, incomplete: %d):\n%s",
+                  mon->buf_fill_sz, events, incomplete, mon->buffer);
 
     } while (virDomainObjIsActive(vm) && (sz < max_sz) &&
              (events == 0 || incomplete));
@@ -874,7 +910,6 @@ static int virCHMonitorReadProcessEvents(virCHMonitorPtr mon)
      * entries to the start of the buffer and next read from the pipe
      * starts from the offset.
      */
-    mon->buf_fill_sz = sz + mon->buf_offset;
     return (events > 0) ? virCHMonitorProcessEvents(mon, events) : events;
 }
 
