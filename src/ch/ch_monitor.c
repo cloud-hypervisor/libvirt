@@ -1204,12 +1204,14 @@ virCHMonitorGetThreadInfo(virCHMonitorPtr mon, bool refresh,
 int virCHMonitorGetIOThreads(virCHMonitorPtr mon,
                             virDomainIOThreadInfoPtr **iothreads)
 {
-    size_t nthreads = 0, niothreads=0;
-    int i;
     virDomainIOThreadInfoPtr *iothreadinfolist = NULL, iothreadinfo = NULL;
+    size_t nthreads = mon->nthreads;
+    size_t niothreads=0;
+    int i;
 
     *iothreads = NULL;
-    nthreads = virCHMonitorRefreshThreadInfo(mon);
+    if (nthreads == 0)
+        return 0;
 
     if (VIR_ALLOC_N(iothreadinfolist, nthreads) < 0)
         goto cleanup;
@@ -1236,8 +1238,14 @@ int virCHMonitorGetIOThreads(virCHMonitorPtr mon,
             niothreads++;
         }
     }
-    VIR_DELETE_ELEMENT_INPLACE(iothreadinfolist,
-                                       niothreads, nthreads);
+
+    /*
+     * Shrink the array to have only niothreads elements.
+     */
+    if (nthreads > niothreads)
+        virShrinkN(&iothreadinfolist, sizeof(virDomainIOThreadInfoPtr),
+               &nthreads, nthreads - niothreads);
+
     *iothreads = iothreadinfolist;
     VIR_DEBUG("niothreads = %ld", niothreads);
     return niothreads;
