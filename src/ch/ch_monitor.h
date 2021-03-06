@@ -133,7 +133,8 @@ struct _virCHMonitor {
 
     char *socketpath;
 
-    int monitor_fd;
+    char *monitorpath;
+
     // Buffer to hold the data read from pipe
     char *buffer;
     // Offset to which new data from pipe has to be read.

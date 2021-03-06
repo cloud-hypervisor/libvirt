@@ -22,6 +22,9 @@
 
 #include <stdio.h>
 #include <unistd.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 #include <assert.h>
 
 #include <curl/curl.h>
@@ -867,7 +870,8 @@ static int virCHMonitorProcessEvents(virCHMonitorPtr mon, int events)
     return ret;
 }
 
-static int virCHMonitorReadProcessEvents(virCHMonitorPtr mon)
+static int virCHMonitorReadProcessEvents(virCHMonitorPtr mon,
+                int monitor_fd)
 {
     size_t max_sz = CH_MONITOR_BUFFER_SZ - mon->buf_offset;
     char *buf = mon->buffer + mon->buf_offset;
@@ -880,7 +884,7 @@ static int virCHMonitorReadProcessEvents(virCHMonitorPtr mon)
     do {
         ssize_t ret;
 
-        ret = read(mon->monitor_fd, buf + sz, max_sz - sz);
+        ret = read(monitor_fd, buf + sz, max_sz - sz);
         if (ret == 0 || (ret < 0 && errno == EINTR)) {
             g_usleep(G_USEC_PER_SEC);
             continue;
@@ -922,15 +926,36 @@ static int virCHMonitorReadProcessEvents(virCHMonitorPtr mon)
 static void virCHMonitorEventLoop(void *data)
 {
     virCHMonitorPtr mon = (virCHMonitorPtr)data;
-    virDomainObjPtr vm = mon->vm;
+    virDomainObjPtr vm = NULL;
+    int monitor_fd;
 
     VIR_DEBUG("Monitor event loop thread starting");
+
+    while((monitor_fd = open(mon->monitorpath, O_RDONLY)) < 0) {
+        if (errno == EINTR) {
+            g_usleep(100000); // 100 milli seconds
+            continue;
+        }
+        /*
+         * Any other error should be a BUG(kernel/libc/libvirtd)
+         * (ENOMEM can happen on exceeding per-user limits)
+         */
+        VIR_ERROR("Failed to open the monitor FIFO(%s) read end!",
+                  mon->monitorpath);
+        abort();
+    }
+    VIR_DEBUG("Opened the monitor FIFO(%s)", mon->monitorpath);
 
     mon->buffer = g_malloc_n(sizeof(char), CH_MONITOR_BUFFER_SZ);
     mon->buf_offset = 0;
     mon->buf_fill_sz = 0;
 
-    virObjectRef(vm);
+    /*
+     * We would need to wait until VM is initialized.
+     */
+    while (!(vm = virObjectRef(mon->vm)))
+        g_usleep(100000);   // 100 milli seconds
+
     while (g_atomic_int_get(&mon->event_loop_stop) == 0) {
         VIR_DEBUG("Reading events from monitor..");
         /*
@@ -939,14 +964,15 @@ static void virCHMonitorEventLoop(void *data)
          * in that case is automatically taken care of. We can
          * safely continue.
          */
-        if (virCHMonitorReadProcessEvents(mon) < 0)
+        if (virCHMonitorReadProcessEvents(mon, monitor_fd) < 0)
             VIR_WARN("Failed to process events from monitor!");
     }
+    close(monitor_fd);
+
     virObjectUnref(vm);
+    virObjectUnref(mon);
 
     VIR_DEBUG("Monitor event loop thread exiting");
-
-    virObjectUnref(mon);
     return;
 }
 
@@ -997,6 +1023,17 @@ virCHMonitorPostInitialize(virCHMonitorPtr mon, virDomainObjPtr vm,
 
     mon->pid = vm->pid;
 
+    /*
+     * Opening FIFO will block until the other end is also opened.
+     * This can cause a potential deadlock if done from the main
+     * thread. So we defer the opening to monitor thread. The same
+     * block can happen on cloud-hypervisor as well. So we start the
+     * monitor thread early here and then wait in the thread until
+     * cloud-hypervisor also opens the FIFO.
+     */
+    if (virCHMonitorStartEventLoop(mon) < 0)
+        return -1;
+
     /* get a curl handle */
     mon->handle = curl_easy_init();
 
@@ -1013,11 +1050,10 @@ virCHMonitorPostInitialize(virCHMonitorPtr mon, virDomainObjPtr vm,
     if (virDomainObjSave(vm, driver->xmlopt, cfg->stateDir) < 0)
         return -1;
 
-    if (virCHMonitorStartEventLoop(mon) < 0)
-        return -1;
-
     return 0;
 }
+
+#define MONITOR_FIFO_PATH_FORMAT    "%s/%s-monitor-fifo"
 
 virCHMonitorPtr
 virCHMonitorOpen(virDomainObjPtr vm, virCHDriverPtr driver)
@@ -1048,6 +1084,14 @@ virCHMonitorOpen(virDomainObjPtr vm, virCHDriverPtr driver)
     if (!(priv->pidfile = virPidFileBuildPath(cfg->stateDir, vm->def->name)))
         goto error;
 
+    mon->monitorpath = g_strdup_printf(MONITOR_FIFO_PATH_FORMAT,
+                                       cfg->stateDir, vm->def->name);
+    if (!virFileExists(mon->monitorpath) ||
+            !virFileIsNamedPipe(mon->monitorpath)) {
+        VIR_ERROR("Monitor file do not exist or is not a FIFO");
+        goto error;
+    }
+
     if (virCHMonitorPostInitialize(mon, vm, driver) < 0)
         goto error;
 
@@ -1067,7 +1111,6 @@ virCHMonitorNew(virDomainObjPtr vm, virCHDriverPtr driver)
     virCHMonitorPtr ret = NULL;
     virCHMonitorPtr mon = NULL;
     virCommandPtr cmd = NULL;
-    int monitor_fds[2];
     int i;
 
     if (virCHMonitorInitialize() < 0)
@@ -1096,15 +1139,27 @@ virCHMonitorNew(virDomainObjPtr vm, virCHDriverPtr driver)
     }
 
     /* Monitor fd to listen for VM state changes */
-    if (pipe(monitor_fds) < 0) {
+    mon->monitorpath = g_strdup_printf(MONITOR_FIFO_PATH_FORMAT,
+                                       cfg->stateDir, vm->def->name);
+    if (virFileExists(mon->monitorpath) &&
+            !virFileIsNamedPipe(mon->monitorpath)) {
+        VIR_WARN("Monitor file (%s) is not a FIFO, trying to delete!",
+                 mon->monitorpath);
+        if (virFileRemove(mon->monitorpath, -1, -1) < 0) {
+            VIR_ERROR("Failed to remove the file: %s", mon->monitorpath);
+            goto cleanup;
+        }
+    }
+
+    if (mkfifo(mon->monitorpath, S_IWUSR | S_IRUSR) < 0 &&
+            errno != EEXIST) {
         virReportSystemError(errno, "%s",
-                             _("Cannot create monitor fd pipe"));
+                             _("Cannot create monitor FIFO"));
         goto cleanup;
     }
-    mon->monitor_fd = monitor_fds[0];
+
     virCommandAddArg(cmd, "--event-monitor");
-    virCommandAddArgFormat(cmd, "fd=%d", monitor_fds[1]);
-    virCommandPassFD(cmd, monitor_fds[1], VIR_COMMAND_PASS_FD_CLOSE_PARENT);
+    virCommandAddArgFormat(cmd, "path=%s", mon->monitorpath);
 
     /* TODO enable */
     virCommandSetPidFile(cmd, priv->pidfile);
@@ -1175,8 +1230,13 @@ void virCHMonitorClose(virCHMonitorPtr mon)
         VIR_FREE(mon->socketpath);
     }
 
-    if (mon->monitor_fd) {
-        close(mon->monitor_fd);
+    if (mon->monitorpath) {
+        if (virFileExists(mon->monitorpath) &&
+            virFileRemove(mon->monitorpath, -1, -1) < 0) {
+            VIR_WARN("Unable to remove CH monitor file '%s'",
+                     mon->monitorpath);
+        }
+        VIR_FREE(mon->monitorpath);
     }
 
     virCHMonitorStopEventLoop(mon);
