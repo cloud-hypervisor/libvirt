@@ -42,6 +42,12 @@
 
 #define VIR_FROM_THIS VIR_FROM_CH
 
+/*
+ * Retry count for temporary failures observed
+ * in Monitor code path.
+ */
+#define MONITOR_TMP_FAIL_RETRIES 5
+
 VIR_LOG_INIT("ch.ch_monitor");
 
 static virClassPtr virCHMonitorClass;
@@ -1094,14 +1100,14 @@ virCHMonitorNew(virDomainObjPtr vm, virCHDriverPtr driver)
     /* get a curl handle */
     mon->handle = curl_easy_init();
 
-    /* try to ping VMM socket 5 times to make sure it is ready */
-    while (pings < 5) {
-        if (virCHMonitorPingVMM(mon) == 0)
-            break;
-        if (pings == 5)
-            goto cleanup;
-
-        g_usleep(100 * 1000);
+    /* Try pinging the VMM to make sure it is ready */
+    while (virCHMonitorPingVMM(mon)) {
+        if (++pings < MONITOR_TMP_FAIL_RETRIES) {
+            g_usleep(100 * 1000);
+            continue;
+        }
+        VIR_WARN("Failed to ping VMM after %d retries", pings);
+        goto cleanup;
     }
 
     if (virDomainObjSave(vm, driver->xmlopt, cfg->stateDir) < 0)
