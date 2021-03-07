@@ -1821,6 +1821,14 @@ virFileLength(const char *path, int fd)
 
 
 bool
+virFileIsNamedPipe(const char *path)
+{
+    struct stat s;
+    return (stat(path, &s) == 0) && S_ISFIFO(s.st_mode);
+}
+
+
+bool
 virFileIsDir(const char *path)
 {
     struct stat s;
