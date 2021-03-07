@@ -779,20 +779,14 @@ virCHProcessReconnect(void *opaque)
         goto error;
     jobStarted = true;
 
-    /* XXX If we ever gonna change pid file pattern, come up with
-     * some intelligence here to deal with old paths. */
-    if (!(priv->pidfile = virPidFileBuildPath(cfg->stateDir, obj->def->name)))
-        goto error;
-
-    obj->def->id = obj->pid;
-    virReportError(VIR_ERR_INTERNAL_ERROR, "%s-%d",
-                   "pid is", obj->pid);
-
     if (chHostdevUpdateActiveDomainDevices(driver, obj->def) < 0)
         goto error;
 
     if (virCHConnectMonitor(driver, obj) < 0)
         goto error;
+
+    obj->def->id = obj->pid;
+    VIR_DEBUG("Domain Object def->id = %d", obj->def->id);
 
     priv->machineName = virCHDomainGetMachineName(obj);
     if (!priv->machineName)

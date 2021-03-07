@@ -977,10 +977,53 @@ static void virCHMonitorStopEventLoop(virCHMonitorPtr mon)
     g_atomic_int_set(&mon->event_loop_stop, 1);
 }
 
+static int
+virCHMonitorPostInitialize(virCHMonitorPtr mon, virDomainObjPtr vm,
+                           virCHDriverPtr driver)
+{
+    g_autoptr(virCHDriverConfig) cfg = virCHDriverGetConfig(driver);
+    virCHDomainObjPrivatePtr priv = vm->privateData;
+    int pings = 0;
+    int rv;
+
+    if ((rv = virPidFileReadPath(priv->pidfile, &vm->pid)) < 0) {
+        virReportSystemError(-rv,
+                             _("Domain %s didn't show up"),
+                             vm->def->name);
+        return -1;
+    }
+    VIR_DEBUG("cloud-hypervisor vm=%p name=%s running with pid=%lld",
+              vm, vm->def->name, (long long)vm->pid);
+
+    mon->pid = vm->pid;
+
+    /* get a curl handle */
+    mon->handle = curl_easy_init();
+
+    /* Try pinging the VMM to make sure it is ready */
+    while (virCHMonitorPingVMM(mon)) {
+        if (++pings < MONITOR_TMP_FAIL_RETRIES) {
+            g_usleep(100 * 1000);
+            continue;
+        }
+        VIR_WARN("Failed to ping VMM after %d retries", pings);
+        return -1;
+    }
+
+    if (virDomainObjSave(vm, driver->xmlopt, cfg->stateDir) < 0)
+        return -1;
+
+    if (virCHMonitorStartEventLoop(mon) < 0)
+        return -1;
+
+    return 0;
+}
+
 virCHMonitorPtr
 virCHMonitorOpen(virDomainObjPtr vm, virCHDriverPtr driver)
 {
     g_autoptr(virCHDriverConfig) cfg = virCHDriverGetConfig(driver);
+    virCHDomainObjPrivatePtr priv = vm->privateData;
     virCHMonitorPtr mon = NULL;
 
     /* Hold an extra reference because we can't allow 'vm' to be
@@ -1000,7 +1043,14 @@ virCHMonitorOpen(virDomainObjPtr vm, virCHDriverPtr driver)
         goto error;
 
     mon->socketpath = g_strdup_printf("%s/%s-socket", cfg->stateDir, vm->def->name);
-    mon->handle = curl_easy_init();
+    /* XXX If we ever gonna change pid file pattern, come up with
+     * some intelligence here to deal with old paths. */
+    if (!(priv->pidfile = virPidFileBuildPath(cfg->stateDir, vm->def->name)))
+        goto error;
+
+    if (virCHMonitorPostInitialize(mon, vm, driver) < 0)
+        goto error;
+
     virObjectRef(mon);
     mon->vm = virObjectRef(vm);
 
@@ -1018,8 +1068,6 @@ virCHMonitorNew(virDomainObjPtr vm, virCHDriverPtr driver)
     virCHMonitorPtr mon = NULL;
     virCommandPtr cmd = NULL;
     int monitor_fds[2];
-    int pings = 0;
-    int rv;
     int i;
 
     if (virCHMonitorInitialize() < 0)
@@ -1063,29 +1111,13 @@ virCHMonitorNew(virDomainObjPtr vm, virCHDriverPtr driver)
     virCommandDaemonize(cmd);
     virCommandRequireHandshake(cmd);
 
-    rv = virCommandRun(cmd, NULL);
-
-    /* wait for cloud-hypervisor process to show up */
-    if (rv == 0) {
-        if ((rv = virPidFileReadPath(priv->pidfile, &vm->pid)) < 0) {
-            virReportSystemError(-rv,
-                                 _("Domain %s didn't show up"),
-                                 vm->def->name);
-            goto cleanup;
-        }
-        VIR_DEBUG("cloud-hypervisor vm=%p name=%s running with pid=%lld",
-                  vm, vm->def->name, (long long)vm->pid);
-    } else {
+    if (virCommandRun(cmd, NULL) != 0) {
         VIR_DEBUG("cloud-hypervisor vm=%p name=%s failed to spawn",
                   vm, vm->def->name);
         goto cleanup;
     }
-    mon->pid = vm->pid;
 
-    VIR_DEBUG("Writing early domain status to disk");
-    if (virDomainObjSave(vm, driver->xmlopt, cfg->stateDir) < 0)
-        goto cleanup;
-
+    /* wait for cloud-hypervisor process to show up */
     VIR_DEBUG("Waiting for handshake from child");
     if (virCommandHandshakeWait(cmd) < 0) {
         /* Read errors from child that occurred between fork and exec. */
@@ -1097,25 +1129,8 @@ virCHMonitorNew(virDomainObjPtr vm, virCHDriverPtr driver)
     if (virCommandHandshakeNotify(cmd) < 0)
         goto cleanup;
 
-    /* get a curl handle */
-    mon->handle = curl_easy_init();
-
-    /* Try pinging the VMM to make sure it is ready */
-    while (virCHMonitorPingVMM(mon)) {
-        if (++pings < MONITOR_TMP_FAIL_RETRIES) {
-            g_usleep(100 * 1000);
-            continue;
-        }
-        VIR_WARN("Failed to ping VMM after %d retries", pings);
+    if (virCHMonitorPostInitialize(mon, vm, driver) < 0)
         goto cleanup;
-    }
-
-    if (virDomainObjSave(vm, driver->xmlopt, cfg->stateDir) < 0)
-        goto cleanup;
-
-    if (virCHMonitorStartEventLoop(mon) < 0) {
-        goto cleanup;
-    }
 
     /* now has its own reference */
     virObjectRef(mon);
