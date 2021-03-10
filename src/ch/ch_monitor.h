@@ -30,6 +30,7 @@
 #define URL_VMM_SHUTDOWN "vmm.shutdown"
 #define URL_VMM_PING "vmm.ping"
 #define URL_VM_CREATE "vm.create"
+#define URL_VM_RESIZE "vm.resize"
 #define URL_VM_DELETE "vm.delete"
 #define URL_VM_BOOT "vm.boot"
 #define URL_VM_SHUTDOWN "vm.shutdown"
@@ -173,3 +174,7 @@ int virCHMonitorGetIOThreads(virCHMonitorPtr mon,
                             virDomainIOThreadInfoPtr **iothreads);
 
 int virCHMonitorGetInfo(virCHMonitorPtr mon, virJSONValuePtr *info);
+
+int
+virCHMonitorResizeCPU(virCHMonitorPtr mon,
+                      unsigned int nvcpus);

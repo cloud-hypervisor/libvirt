@@ -497,6 +497,15 @@ virCHMonitorBuildDevicesJson(virJSONValuePtr content, virDomainDefPtr vmdef)
 }
 
 static int
+virCHMonitorBuildResizeCPUsJson(virJSONValuePtr content, unsigned int nvcpus)
+{
+    if (virJSONValueObjectAppendNumberUint(content, "desired_vcpus", nvcpus) < 0)
+        return -1;
+
+    return 0;
+}
+
+static int
 virCHMonitorBuildVMJson(virDomainObjPtr vm, virDomainDefPtr vmdef, char **jsonstr,
                         size_t *nnicindexes, int **nicindexes)
 {
@@ -535,6 +544,26 @@ virCHMonitorBuildVMJson(virDomainObjPtr vm, virDomainDefPtr vmdef, char **jsonst
         goto cleanup;
 
     if (virCHMonitorBuildDevicesJson(content, vmdef) < 0)
+        goto cleanup;
+
+    if (!(*jsonstr = virJSONValueToString(content, false)))
+        goto cleanup;
+
+    ret = 0;
+
+ cleanup:
+    virJSONValueFree(content);
+    return ret;
+}
+
+static int
+virCHMonitorBuildResizeJson(const unsigned int nvcpus,
+                            char **jsonstr)
+{
+    virJSONValuePtr content = virJSONValueNewObject();
+    int ret = -1;
+
+    if (virCHMonitorBuildResizeCPUsJson(content, nvcpus) < 0)
         goto cleanup;
 
     if (!(*jsonstr = virJSONValueToString(content, false)))
@@ -1528,6 +1557,17 @@ int
 virCHMonitorPingVMM(virCHMonitorPtr mon)
 {
     return virCHMonitorGet(mon, URL_VMM_PING, NULL);
+}
+
+int
+virCHMonitorResizeCPU(virCHMonitorPtr mon,
+                      unsigned int nvcpus)
+{
+    g_autofree char *payload = NULL;
+    if (virCHMonitorBuildResizeJson(nvcpus, &payload))
+        return -1;
+
+    return virCHMonitorPut(mon, URL_VM_RESIZE, payload);
 }
 
 int
