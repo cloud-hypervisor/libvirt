@@ -9,6 +9,8 @@ ch_driver_sources = [
   'ch_driver.h',
   'ch_hostdev.c',
   'ch_hostdev.h',
+  'ch_hotplug.c',
+  'ch_hotplug.h',
   'ch_monitor.c',
   'ch_monitor.h',
   'ch_process.c',
