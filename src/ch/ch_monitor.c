@@ -1256,7 +1256,7 @@ void virCHMonitorClose(virCHMonitorPtr mon)
             VIR_WARN("Unable to remove CH socket file '%s'",
                      mon->socketpath);
         }
-        VIR_FREE(mon->socketpath);
+        g_free(mon->socketpath);
     }
 
     if (mon->monitorpath) {
@@ -1449,7 +1449,7 @@ virCHMonitorPutNoContent(virCHMonitorPtr mon, const char *endpoint)
     if (responseCode == 200 || responseCode == 204)
         ret = 0;
 
-    VIR_FREE(url);
+    g_free(url);
     curl_slist_free_all(headers);
 
     return ret;
@@ -1549,7 +1549,7 @@ virCHMonitorGet(virCHMonitorPtr mon, const char *endpoint, virJSONValuePtr *resp
         }
     }
 
-    VIR_FREE(url);
+    g_free(url);
     return ret;
 }
 
@@ -1614,8 +1614,6 @@ virCHMonitorCreateVM(virCHMonitorPtr mon,
         ret = 0;
 
     curl_slist_free_all(headers);
-    VIR_FREE(url);
-    VIR_FREE(payload);
     return ret;
 }
 
@@ -1653,7 +1651,7 @@ static void
 virCHMonitorThreadInfoFree(virCHMonitorPtr mon)
 {
     if (mon->threads)
-        VIR_FREE(mon->threads);
+        g_free(mon->threads);
     mon->threads = NULL;
     mon->nthreads = 0;
 }
@@ -1704,8 +1702,7 @@ virCHMonitorRefreshThreadInfo(virCHMonitorPtr mon)
 
     virCHMonitorThreadInfoFree(mon);
 
-    if (VIR_ALLOC_N(info, ntids) < 0)
-        return -1;
+    info = g_new(virCHMonitorThreadInfo, ntids);
 
     for (i = 0; i < ntids; i++) {
         g_autofree char *proc = NULL;
@@ -1809,14 +1806,12 @@ int virCHMonitorGetIOThreads(virCHMonitorPtr mon,
     if (nthreads == 0)
         return 0;
 
-    if (VIR_ALLOC_N(iothreadinfolist, nthreads) < 0)
-        goto cleanup;
+    iothreadinfolist = g_new(virDomainIOThreadInfoPtr, nthreads);
 
     for (i = 0; i < nthreads; i++){
         virBitmapPtr map = NULL;
         if (mon->threads[i].type == virCHThreadTypeIO) {
-            if(VIR_ALLOC(iothreadinfo) < 0)
-                goto cleanup;
+            iothreadinfo = g_new(virDomainIOThreadInfo, 1);
 
             iothreadinfo->iothread_id = mon->threads[i].tid;
 
@@ -1849,10 +1844,10 @@ int virCHMonitorGetIOThreads(virCHMonitorPtr mon,
     cleanup:
         if (iothreadinfolist) {
             for (i = 0; i < niothreads; i++)
-                VIR_FREE(iothreadinfolist[i]);
-            VIR_FREE(iothreadinfolist);
+                g_free(iothreadinfolist[i]);
+            g_free(iothreadinfolist);
         }
         if (iothreadinfo)
-            VIR_FREE(iothreadinfo);
+            g_free(iothreadinfo);
         return -1;
 }
