@@ -421,7 +421,6 @@ virCHProcessSetupVcpu(virDomainObjPtr vm,
 static int
 virCHProcessSetupVcpuPids(virDomainObjPtr vm)
 {
-    size_t maxvcpus = virDomainDefGetVcpusMax(vm->def);
     virCHMonitorThreadInfoPtr info = NULL;
     size_t nthreads, ncpus = 0;
     size_t i;
@@ -436,18 +435,12 @@ virCHProcessSetupVcpuPids(virDomainObjPtr vm)
         if (info[i].type != virCHThreadTypeVcpu)
             continue;
 
-        // TODO: hotplug support
         vcpuInfo = &info[i].vcpuInfo;
         vcpu = virDomainDefGetVcpu(vm->def, vcpuInfo->cpuid);
         vcpupriv = CH_DOMAIN_VCPU_PRIVATE(vcpu);
         vcpupriv->tid = info[i].tid;
         ncpus++;
     }
-
-    // TODO: Remove the warning when hotplug is implemented.
-    if (ncpus != maxvcpus)
-        VIR_WARN("Mismatch in the number of cpus, expected: %ld, actual: %ld",
-                 maxvcpus, ncpus);
 
     return 0;
 }

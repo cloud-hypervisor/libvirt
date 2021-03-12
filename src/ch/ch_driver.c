@@ -23,6 +23,7 @@
 #include "ch_conf.h"
 #include "ch_domain.h"
 #include "ch_driver.h"
+#include "ch_hotplug.h"
 #include "ch_monitor.h"
 #include "ch_process.h"
 #include "ch_cgroup.h"
@@ -1770,6 +1771,92 @@ chDomainSetNumaParameters(virDomainPtr dom,
     return ret;
 }
 
+static int
+virCHDomainSetVcpusMax(virCHDriverPtr driver,
+                       virDomainDefPtr def,
+                       virDomainDefPtr persistentDef,
+                       unsigned int nvcpus)
+{
+    g_autoptr(virCHDriverConfig) cfg = virCHDriverGetConfig(driver);
+    unsigned int topologycpus;
+
+    if (def) {
+        virReportError(VIR_ERR_OPERATION_UNSUPPORTED, "%s",
+                       _("maximum vcpu count of a live domain can't be modified"));
+        return -1;
+    }
+
+    if (virDomainNumaGetCPUCountTotal(persistentDef->numa) > nvcpus) {
+        virReportError(VIR_ERR_INVALID_ARG, "%s",
+                       _("Number of CPUs in <numa> exceeds the desired "
+                         "maximum vcpu count"));
+        return -1;
+    }
+
+    if (virDomainDefGetVcpusTopology(persistentDef, &topologycpus) == 0 &&
+        nvcpus != topologycpus) {
+        /* allow setting a valid vcpu count for the topology so an invalid
+         * setting may be corrected via this API */
+        virReportError(VIR_ERR_INVALID_ARG, "%s",
+                       _("CPU topology doesn't match the desired vcpu count"));
+        return -1;
+    }
+
+    /* ordering information may become invalid, thus clear it */
+    virDomainDefVcpuOrderClear(persistentDef);
+
+    if (virDomainDefSetVcpusMax(persistentDef, nvcpus, driver->xmlopt) < 0)
+        return -1;
+
+    if (virDomainDefSave(persistentDef, driver->xmlopt, cfg->stateDir) < 0)
+        return -1;
+
+    return 0;
+}
+
+static int
+chDomainSetVcpusFlags(virDomainPtr dom,
+                      unsigned int nvcpus,
+                      unsigned int flags)
+{
+    virCHDriverPtr driver = dom->conn->privateData;
+    virDomainObjPtr vm = NULL;
+    virDomainDefPtr def;
+    virDomainDefPtr persistentDef;
+    int ret = -1;
+
+    virCheckFlags(VIR_DOMAIN_AFFECT_LIVE |
+                  VIR_DOMAIN_AFFECT_CONFIG |
+                  VIR_DOMAIN_VCPU_MAXIMUM |
+                  VIR_DOMAIN_VCPU_GUEST |
+                  VIR_DOMAIN_VCPU_HOTPLUGGABLE, -1);
+
+    if (!(vm = virCHDomainObjFromDomain(dom)))
+        goto cleanup;
+
+    if (virDomainSetVcpusFlagsEnsureACL(dom->conn, vm->def, flags) < 0)
+        goto cleanup;
+
+
+    if (virCHDomainObjBeginJob(vm, CH_JOB_MODIFY) < 0)
+        goto cleanup;
+
+    if (virDomainObjGetDefs(vm, flags, &def, &persistentDef) < 0)
+        goto endjob;
+
+    if (flags & VIR_DOMAIN_VCPU_MAXIMUM)
+        ret = virCHDomainSetVcpusMax(driver, def, persistentDef, nvcpus);
+    else
+        ret = virCHDomainSetVcpusInternal(vm, def, nvcpus);
+
+ endjob:
+    virCHDomainObjEndJob(vm);
+
+ cleanup:
+    virDomainObjEndAPI(&vm);
+    return ret;
+}
+
 /* Function Tables */
 static virHypervisorDriver chHypervisorDriver = {
     .name = "CH",
@@ -1818,6 +1905,7 @@ static virHypervisorDriver chHypervisorDriver = {
     .nodeGetCPUMap = chNodeGetCPUMap,                       /* 6.7.0 */
     .domainSetNumaParameters = chDomainSetNumaParameters,   /* 6.7.0 */
     .domainGetNumaParameters = chDomainGetNumaParameters,   /* 6.7.0 */
+    .domainSetVcpusFlags = chDomainSetVcpusFlags,           /* 6.7.0 */
 };
 
 static virConnectDriver chConnectDriver = {
