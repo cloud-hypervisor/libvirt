@@ -417,6 +417,47 @@ char *virCHDomainGetMachineName(virDomainObjPtr vm)
 }
 
 /**
+ * virCHDomainValidateVcpuInfo:
+ *
+ * Validates vcpu thread information. If vcpu thread IDs are available,
+ * this function validates that online vcpus have thread info present and
+ * offline vcpus don't.
+ *
+ * Returns 0 on success -1 on error.
+ */
+int
+virCHDomainValidateVcpuInfo(virDomainObjPtr vm)
+{
+    size_t maxvcpus = virDomainDefGetVcpusMax(vm->def);
+    virDomainVcpuDefPtr vcpu;
+    virCHDomainVcpuPrivatePtr vcpupriv;
+    size_t i;
+
+    if (!virCHDomainHasVcpuPids(vm))
+        return 0;
+
+    for (i = 0; i < maxvcpus; i++) {
+        vcpu = virDomainDefGetVcpu(vm->def, i);
+        vcpupriv = CH_DOMAIN_VCPU_PRIVATE(vcpu);
+
+        if (vcpu->online && vcpupriv->tid == 0) {
+            virReportError(VIR_ERR_INTERNAL_ERROR,
+                           _("Didn't find thread id for vcpu '%zu'"), i);
+            return -1;
+        }
+
+        if (!vcpu->online && vcpupriv->tid != 0) {
+            virReportError(VIR_ERR_INTERNAL_ERROR,
+                           _("Found thread id for inactive vcpu '%zu'"),
+                           i);
+            return -1;
+        }
+    }
+
+    return 0;
+}
+
+/**
  * virCHDomainObjFromDomain:
  * @domain: Domain pointer that has to be looked up
  *
