@@ -771,7 +771,20 @@ static int virCHMonitorProcessEvent(virCHMonitorPtr mon,
         case virCHMonitorVmEventSnapshotted:
         case virCHMonitorVmEventRestoring:
         case virCHMonitorVmEventResizing:
+            break;
         case virCHMonitorVmEventResized:
+            virObjectLock(vm);
+            if (virDomainObjIsActive(vm) &&
+                   virCHDomainObjBeginJob(vm, CH_JOB_MODIFY) == 0) {
+                virCHProcessSetupThreads(vm);
+                /* currently cloud hypervisor lazy offlines cpus so
+                 * the offline cpus may still have an active thread id
+                 * making virCHDomainValidateVcpuInfo fail. For now
+                 * don't validate the result of resizing. */
+                virCHDomainObjEndJob(vm);
+            }
+            virObjectUnlock(vm);
+            break;
         case virCHMonitorVmEventDeleted:
         case virCHMonitorVmmEventStarting:
         case virCHMonitorCpuCreateVcpu:

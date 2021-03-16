@@ -503,6 +503,8 @@ virCHProcessSetupVcpus(virDomainObjPtr vm)
 
 int virCHProcessSetupThreads(virDomainObjPtr vm)
 {
+    virCHDriverPtr driver = CH_DOMAIN_PRIVATE(vm)->driver;
+    g_autoptr(virCHDriverConfig) cfg = virCHDriverGetConfig(driver);
     virCHDomainObjPrivatePtr priv = vm->privateData;
     int ret;
 
@@ -521,6 +523,10 @@ int virCHProcessSetupThreads(virDomainObjPtr vm)
     if (!ret) {
         VIR_DEBUG("Setting vCPU tuning/settings");
         ret = virCHProcessSetupVcpus(vm);
+    }
+
+    if (!ret) {
+        ret = virDomainObjSave(vm, driver->xmlopt, cfg->stateDir);
     }
 
     return ret;
