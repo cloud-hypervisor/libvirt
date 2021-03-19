@@ -36,12 +36,24 @@ pipeline{
 					}
 					stage ('Configure') {
 						steps {
-							sh "meson build -D driver_ch=enabled -D driver_qemu=disabled -D driver_openvz=disabled -D driver_esx=disabled -D driver_vmware=disabled -D driver_lxc=disabled -D driver_libxl=disabled -D driver_vbox=disabled"
+							sh "meson build -D driver_ch=enabled -D driver_qemu=disabled -D driver_openvz=disabled -D driver_esx=disabled -D driver_vmware=disabled -D driver_lxc=disabled -D driver_libxl=disabled -D driver_vbox=disabled -D system=true"
 						}
 					}
-					stage ('Build') {
+					stage ('Build & Install') {
 						steps {
 							sh "ninja -C build"
+							sh "sudo ninja -C build install"
+							sh "sudo ldconfig"
+						}
+					}
+					stage ('Install Rust') {
+						steps {
+							sh "curl https://sh.rustup.rs -sSf | sh -s -- -y"
+						}
+					}
+					stage ('Build & Install Cloud Hypervisor') {
+						steps {
+							sh "ch_integration_tests/build_ch.sh"
 						}
 					}
 				}
