@@ -1,0 +1,8 @@
+[package]
+name = "ch_integration_tests"
+version = "0.1.0"
+edition = "2018"
+authors = ["The Cloud Hypervisor Authors"]
+license = "LICENSE-APACHE"
+
+[dependencies]

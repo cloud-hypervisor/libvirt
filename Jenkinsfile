@@ -36,7 +36,7 @@ pipeline{
 					}
 					stage ('Configure') {
 						steps {
-							sh "meson build -D driver_ch=enabled -D driver_qemu=disabled -D driver_openvz=disabled -D driver_esx=disabled -D driver_vmware=disabled -D driver_lxc=disabled -D driver_libxl=disabled -D driver_vbox=disabled -D system=true"
+							sh "meson build -D driver_ch=enabled -D driver_qemu=disabled -D driver_openvz=disabled -D driver_esx=disabled -D driver_vmware=disabled -D driver_lxc=disabled -D driver_libxl=disabled -D driver_vbox=disabled -D system=true --prefix=/usr"
 						}
 					}
 					stage ('Build & Install') {
@@ -56,6 +56,12 @@ pipeline{
 							sh "ch_integration_tests/build_ch.sh"
 						}
 					}
+					stage ('Run integration tests') {
+						steps {
+							sh "ch_integration_tests/run_tests.sh"
+						}
+					}
+
 				}
 
 			}
