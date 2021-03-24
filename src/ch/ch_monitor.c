@@ -315,8 +315,6 @@ virCHMonitorBuildNetJson(virDomainObjPtr vm, virJSONValuePtr nets, virDomainNetD
     char macaddr[VIR_MAC_STRING_BUFLEN];
     virCHDomainObjPrivatePtr priv = vm->privateData;
     virJSONValuePtr net;
-    virJSONValuePtr clh_tapfds = NULL;
-    int i = 0;
     net = virJSONValueNewObject();
 
     switch (netType) {
@@ -387,17 +385,11 @@ virCHMonitorBuildNetJson(virDomainObjPtr vm, virJSONValuePtr nets, virDomainNetD
         goto cleanup;
     }
 
-    clh_tapfds = virJSONValueNewArray();
-    for (i=0; i< priv->tapfdSize; i++) {
-        virJSONValueArrayAppend(clh_tapfds, virJSONValueNewNumberUint(priv->tapfd[i]));
-    }
-
-    if (virJSONValueObjectAppend(net, "fds", clh_tapfds) < 0)
+    if (virJSONValueObjectAppendString(net, "tap", priv->tapName) < 0)
         goto cleanup;
 
     if (virJSONValueObjectAppendString(net, "mac", virMacAddrFormat(&netdef->mac, macaddr)) < 0)
         goto cleanup;
-
 
     if (netdef->virtio != NULL) {
         if (netdef->virtio->iommu == VIR_TRISTATE_SWITCH_ON) {
@@ -616,7 +608,6 @@ chMonitorBuildSocketCmd(virDomainObjPtr vm, const char *socket_path)
         cmd = virCommandNew(CH_CMD);
 
     virCommandAddArgList(cmd, "--api-socket", socket_path, NULL);
-
     return cmd;
 }
 

@@ -77,6 +77,7 @@ struct _virCHDomainObjPrivate {
 
     size_t tapfdSize;
     int *tapfd;
+    char *tapName;
 
     virThread vmThreadWatcher;
     int vmThreadWatcherStop;

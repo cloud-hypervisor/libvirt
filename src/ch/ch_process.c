@@ -38,6 +38,7 @@
 #include "virjson.h"
 #include "virlog.h"
 #include "virpidfile.h"
+#include "virstring.h"
 
 #define VIR_FROM_THIS VIR_FROM_CH
 
@@ -608,6 +609,12 @@ chProcessNetworkPrepareDevices(virCHDriverPtr driver, virDomainObjPtr vm)
             // This info will be used while generating Network Json
             priv->tapfd = g_steal_pointer(&tapfd);
             priv->tapfdSize = tapfdSize;
+            priv->tapName = g_new(char, IFNAMSIZ);
+            if (virStrcpy(priv->tapName, net->ifname, IFNAMSIZ) < 0) {
+                virReportError(VIR_ERR_INTERNAL_ERROR,
+                       _("net->ifname %s too big for destination"), net->ifname);
+                goto cleanup;
+            }
          }
     }
 
@@ -615,7 +622,7 @@ chProcessNetworkPrepareDevices(virCHDriverPtr driver, virDomainObjPtr vm)
 
     cleanup:
         g_free(tapfd);
-    return 0;
+    return -1;
 }
 
 
