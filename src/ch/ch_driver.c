@@ -28,6 +28,7 @@
 #include "ch_process.h"
 #include "ch_cgroup.h"
 #include "datatypes.h"
+#include "domain_event.h"
 #include "driver.h"
 #include "viraccessapicheck.h"
 #include "viralloc.h"
@@ -309,7 +310,9 @@ static virDomainPtr
 chDomainDefineXMLFlags(virConnectPtr conn, const char *xml, unsigned int flags)
 {
     virCHDriverPtr driver = conn->privateData;
+    g_autoptr(virCHDriverConfig) cfg = virCHDriverGetConfig(driver);
     virDomainDefPtr vmdef = NULL;
+    virDomainDefPtr oldDef = NULL;
     virDomainObjPtr vm = NULL;
     virDomainPtr dom = NULL;
     unsigned int parse_flags = VIR_DOMAIN_DEF_PARSE_INACTIVE;
@@ -331,15 +334,37 @@ chDomainDefineXMLFlags(virConnectPtr conn, const char *xml, unsigned int flags)
 
     if (!(vm = virDomainObjListAdd(driver->domains, vmdef,
                                    driver->xmlopt,
-                                   0, NULL)))
+                                   0, &oldDef)))
         goto cleanup;
 
     vmdef = NULL;
     vm->persistent = 1;
 
+    if (virDomainDefSave(vm->newDef ? vm->newDef : vm->def,
+                         driver->xmlopt, cfg->configDir) < 0) {
+        if (oldDef) {
+            /* There is backup so this VM was defined before.
+             * Just restore the backup. */
+            VIR_INFO("Restoring domain '%s' definition", vm->def->name);
+            if (virDomainObjIsActive(vm))
+                vm->newDef = oldDef;
+            else
+                vm->def = oldDef;
+            oldDef = NULL;
+        } else {
+            /* Brand new domain. Remove it */
+            VIR_INFO("Deleting domain '%s'", vm->def->name);
+            vm->persistent = 0;
+            virCHDomainRemoveInactiveJob(driver, vm);
+        }
+        goto cleanup;
+    }
+
+    VIR_INFO("Creating domain '%s'", vm->def->name);
     dom = virGetDomain(conn, vm->def->name, vm->def->uuid, vm->def->id);
 
  cleanup:
+    virDomainDefFree(oldDef);
     virDomainDefFree(vmdef);
     virDomainObjEndAPI(&vm);
     return dom;
@@ -356,6 +381,7 @@ chDomainUndefineFlags(virDomainPtr dom,
                       unsigned int flags)
 {
     virCHDriverPtr driver = dom->conn->privateData;
+    g_autoptr(virCHDriverConfig) cfg = virCHDriverGetConfig(driver);
     virDomainObjPtr vm;
     int ret = -1;
 
@@ -367,20 +393,28 @@ chDomainUndefineFlags(virDomainPtr dom,
     if (virDomainUndefineFlagsEnsureACL(dom->conn, vm->def) < 0)
         goto cleanup;
 
+    if (virCHDomainObjBeginJob(vm, CH_JOB_MODIFY) < 0)
+        goto cleanup;
+
     if (!vm->persistent) {
         virReportError(VIR_ERR_OPERATION_INVALID,
                        "%s", _("Cannot undefine transient domain"));
-        goto cleanup;
+        goto endjob;
     }
 
-    if (virDomainObjIsActive(vm)) {
-        vm->persistent = 0;
-    } else {
+    if (virDomainDeleteConfig(cfg->configDir, cfg->autostartDir, vm) < 0)
+        goto endjob;
+
+    VIR_INFO("Undefining domain '%s'", vm->def->name);
+
+    vm->persistent = 0;
+    if (!virDomainObjIsActive(vm))
         virDomainObjListRemove(driver->domains, vm);
-    }
 
     ret = 0;
 
+ endjob:
+    virCHDomainObjEndJob(vm);
  cleanup:
     virDomainObjEndAPI(&vm);
     return ret;
@@ -966,6 +1000,13 @@ static int chStateInitialize(bool privileged,
     if (virDomainObjListLoadAllConfigs(ch_driver->domains,
                                        ch_driver->config->stateDir,
                                        NULL, true,
+                                       ch_driver->xmlopt,
+                                       NULL, NULL) < 0)
+      goto cleanup;
+
+    if (virDomainObjListLoadAllConfigs(ch_driver->domains,
+                                       ch_driver->config->configDir,
+                                       ch_driver->config->autostartDir, false,
                                        ch_driver->xmlopt,
                                        NULL, NULL) < 0)
         goto cleanup;
