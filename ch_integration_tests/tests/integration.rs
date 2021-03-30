@@ -212,6 +212,7 @@ mod tests {
     }
 
     fn cleanup_libvirt_state() {
+        let _ = std::fs::remove_dir_all("/etc/libvirt/ch");
         let _ = std::fs::remove_dir_all("/var/lib/libvirt");
         let _ = std::fs::remove_file("/var/run/libvirtd.pid");
         let _ = std::fs::remove_dir_all("/var/run/libvirt");
