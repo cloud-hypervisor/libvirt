@@ -6,6 +6,7 @@
 #[cfg(test)]
 #[macro_use]
 extern crate lazy_static;
+extern crate regex;
 
 #[cfg(test)]
 mod tests {
@@ -16,6 +17,7 @@ mod tests {
     use std::{ffi::OsStr, path::PathBuf};
     use test_infra::*;
 
+    use regex::Regex;
     use uuid::Uuid;
     use vmm_sys_util::tempdir::TempDir;
 
@@ -275,6 +277,63 @@ mod tests {
         );
 
         assert!(r.is_ok());
+    }
+
+    #[test]
+    fn test_defines() {
+        cleanup_libvirt_state();
+        let mut libvirtd = spawn_libvirtd().unwrap();
+        thread::sleep(std::time::Duration::new(5, 0));
+
+        let mut disk = UbuntuDiskConfig::new(FOCAL_IMAGE_NAME.to_owned());
+        let guest = Guest::new(&mut disk);
+        let domain_path = guest.create_domain(DEFAULT_VCPUS, DEFAULT_RAM_SIZE);
+        let output = spawn_virsh(&["define", domain_path.to_str().unwrap()])
+            .unwrap()
+            .wait_with_output()
+            .unwrap();
+
+        libvirtd.kill().unwrap();
+        // libvirtd got SIGKILL, cleanup /var/run manually
+        // to avoid getting non-persistent state leftovers
+        let _ = std::fs::remove_dir_all("/var/lib/libvirt");
+        let _ = std::fs::remove_file("/var/run/libvirtd.pid");
+        let _ = std::fs::remove_dir_all("/var/run/libvirt");
+
+        // verify persistent state exists
+        let mut libvirtd = spawn_libvirtd().unwrap();
+        thread::sleep(std::time::Duration::new(5, 0));
+        let list_output = spawn_virsh(&["list", "--all"])
+            .unwrap()
+            .wait_with_output()
+            .unwrap();
+
+        let undefine_output = spawn_virsh(&["undefine", &guest.vm_name])
+            .unwrap()
+            .wait_with_output()
+            .unwrap();
+
+        libvirtd.kill().unwrap();
+        let libvirtd_output = libvirtd.wait_with_output().unwrap();
+
+        eprintln!(
+            "libvirtd stdout\n\n{}\n\nlibvirtd stderr\n\n{}",
+            std::str::from_utf8(&libvirtd_output.stdout).unwrap(),
+            std::str::from_utf8(&libvirtd_output.stderr).unwrap()
+        );
+
+        assert!(std::str::from_utf8(&output.stdout)
+            .unwrap()
+            .trim()
+            .starts_with(&format!("Domain {} defined", guest.vm_name)));
+
+        let re = Regex::new(&format!(r"\s+-\s+{}\s+shut off", guest.vm_name)).unwrap();
+        assert!(re.is_match(std::str::from_utf8(&list_output.stdout).unwrap().trim()));
+
+        assert!(std::str::from_utf8(&undefine_output.stdout)
+            .unwrap()
+            .trim()
+            .starts_with(&format!("Domain {} has been undefined", guest.vm_name)));
     }
 
     #[test]
