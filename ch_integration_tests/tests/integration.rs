@@ -248,10 +248,21 @@ mod tests {
             guest.wait_vm_boot(None).unwrap();
         });
 
-        spawn_virsh(&["destroy", &guest.vm_name])
+        let destroy_output = spawn_virsh(&["destroy", &guest.vm_name])
             .unwrap()
-            .wait()
+            .wait_with_output()
             .unwrap();
+
+        eprintln!(
+            "destroy stdout\n\n{}\n\ndestroy stderr\n\n{}",
+            std::str::from_utf8(&destroy_output.stdout).unwrap(),
+            std::str::from_utf8(&destroy_output.stderr).unwrap()
+        );
+
+        assert!(std::str::from_utf8(&destroy_output.stdout)
+            .unwrap()
+            .trim()
+            .starts_with(&format!("Domain {} destroyed", guest.vm_name)));
 
         libvirtd.kill().unwrap();
         let libvirtd_output = libvirtd.wait_with_output().unwrap();
