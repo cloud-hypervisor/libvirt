@@ -81,6 +81,8 @@ struct _virCHDomainObjPrivate {
 
     virThread vmThreadWatcher;
     int vmThreadWatcherStop;
+
+    char *ch_path;
 };
 
 #define CH_DOMAIN_PRIVATE(vm) \

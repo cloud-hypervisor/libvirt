@@ -586,15 +586,9 @@ virCHMonitorBuildResizeJson(const unsigned int nvcpus,
     return ret;
 }
 
-/* generate command to launch Cloud-Hypervisor socket
-   return -1 - error
-           0 - OK
-   Caller has to free the cmd
-*/
-static virCommandPtr
-chMonitorBuildSocketCmd(virDomainObjPtr vm, const char *socket_path)
+static char *getCHPath(virDomainObjPtr vm)
 {
-    virCommandPtr cmd;
+    char *ch_path = NULL;
 
     if (vm->def == NULL) {
         virReportError(VIR_ERR_INTERNAL_ERROR, "%s",
@@ -603,12 +597,11 @@ chMonitorBuildSocketCmd(virDomainObjPtr vm, const char *socket_path)
     }
 
     if (vm->def->emulator != NULL)
-        cmd = virCommandNew(vm->def->emulator);
+        ch_path = g_find_program_in_path(vm->def->emulator);
     else
-        cmd = virCommandNew(CH_CMD);
+        ch_path = g_find_program_in_path(CH_CMD);
 
-    virCommandAddArgList(cmd, "--api-socket", socket_path, NULL);
-    return cmd;
+    return ch_path;
 }
 
 static const char *virCHMonitorEventStrings[] = {
@@ -927,9 +920,11 @@ static int virCHMonitorReadProcessEvents(virCHMonitorPtr mon,
     size_t max_sz = CH_MONITOR_BUFFER_SZ - mon->buf_offset;
     char *buf = mon->buffer + mon->buf_offset;
     virDomainObjPtr vm = mon->vm;
+    virCHDomainObjPrivatePtr priv = vm->privateData;
     bool incomplete = false;
     int events = 0;
     size_t sz = 0;
+    pid_t pid = 0;
 
     memset(buf, 0, max_sz);
     do {
@@ -937,6 +932,10 @@ static int virCHMonitorReadProcessEvents(virCHMonitorPtr mon,
 
         ret = read(monitor_fd, buf + sz, max_sz - sz);
         if (ret == 0 || (ret < 0 && errno == EINTR)) {
+            if ((virPidFileReadPathIfAlive(priv->pidfile, &pid, priv->ch_path)) < 0 || (pid < 0)) {
+                virCHProcessStop(CH_DOMAIN_PRIVATE(vm)->driver, vm, VIR_DOMAIN_SHUTOFF_CRASHED);
+                return -1;
+            }
             g_usleep(G_USEC_PER_SEC);
             continue;
         } else if (ret < 0) {
@@ -1175,8 +1174,12 @@ virCHMonitorNew(virDomainObjPtr vm, virCHDriverPtr driver)
         goto cleanup;
 
     /* prepare to launch Cloud-Hypervisor socket */
-    if (!(cmd = chMonitorBuildSocketCmd(vm, mon->socketpath)))
-        goto cleanup;
+    if (!(priv->ch_path = getCHPath(vm)))
+      goto cleanup;
+
+    cmd = virCommandNew(priv->ch_path);
+
+    virCommandAddArgList(cmd, "--api-socket", mon->socketpath, NULL);
 
     if (virFileMakePath(cfg->stateDir) < 0) {
         virReportSystemError(errno,
