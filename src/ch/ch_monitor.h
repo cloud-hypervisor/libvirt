@@ -140,7 +140,7 @@ struct _virCHMonitor {
     char *buffer;
     // Offset to which new data from pipe has to be read.
     size_t buf_offset;
-    // Size of the data read from pipe in buffer 
+    // Size of the data read from pipe in buffer
     size_t buf_fill_sz;
 
     virThread event_loop_thread;
