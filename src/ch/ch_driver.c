@@ -948,7 +948,7 @@ static int chStateCleanup(void)
     virObjectUnref(ch_driver->config);
     virObjectUnref(ch_driver->hostdevMgr);
     virMutexDestroy(&ch_driver->lock);
-    VIR_FREE(ch_driver);
+    g_free(ch_driver);
 
     return 0;
 }
@@ -974,7 +974,7 @@ static int chStateInitialize(bool privileged,
         return VIR_DRV_STATE_INIT_ERROR;
 
     if (virMutexInit(&ch_driver->lock) < 0) {
-        VIR_FREE(ch_driver);
+        g_free(ch_driver);
         return VIR_DRV_STATE_INIT_ERROR;
     }
 

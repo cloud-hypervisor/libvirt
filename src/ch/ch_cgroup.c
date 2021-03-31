@@ -218,7 +218,7 @@ chRestoreCgroupState(virDomainObjPtr vm)
             virCgroupSetCpusetMems(cgroup_temp, nodeset) < 0)
             goto cleanup;
 
-        VIR_FREE(nodeset);
+        g_free(nodeset);
         virCgroupFree(&cgroup_temp);
     }
 
@@ -231,7 +231,7 @@ chRestoreCgroupState(virDomainObjPtr vm)
             virCgroupSetCpusetMems(cgroup_temp, nodeset) < 0)
             goto cleanup;
 
-        VIR_FREE(nodeset);
+        g_free(nodeset);
         virCgroupFree(&cgroup_temp);
     }
 
@@ -394,8 +394,8 @@ chCgroupEmulatorAllNodesDataFree(chCgroupEmulatorAllNodesDataPtr data)
         return;
 
     virCgroupFree(&data->emulatorCgroup);
-    VIR_FREE(data->emulatorMemMask);
-    VIR_FREE(data);
+    g_free(data->emulatorMemMask);
+    g_free(data);
 }
 
 

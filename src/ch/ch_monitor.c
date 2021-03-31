@@ -1287,7 +1287,7 @@ void virCHMonitorClose(virCHMonitorPtr mon)
             VIR_WARN("Unable to remove CH monitor file '%s'",
                      mon->monitorpath);
         }
-        VIR_FREE(mon->monitorpath);
+        g_free(mon->monitorpath);
     }
 
     virCHMonitorStopEventLoop(mon);

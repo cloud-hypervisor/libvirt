@@ -166,8 +166,8 @@ virCHDriverConfigDispose(void *obj)
 {
     virCHDriverConfigPtr cfg = obj;
 
-    VIR_FREE(cfg->stateDir);
-    VIR_FREE(cfg->logDir);
+    g_free(cfg->stateDir);
+    g_free(cfg->logDir);
 }
 
 static int
@@ -214,7 +214,7 @@ chExtractVersionInfo(int *retversion)
 
  cleanup:
     virCommandFree(cmd);
-    VIR_FREE(help);
+    g_free(help);
 
     return ret;
 }
