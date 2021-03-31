@@ -533,4 +533,58 @@ mod tests {
             "ch:///system"
         );
     }
+
+    #[test]
+    fn test_vm_restart() {
+        cleanup_libvirt_state();
+        let mut libvirtd = spawn_libvirtd().unwrap();
+        thread::sleep(std::time::Duration::new(5, 0));
+
+        let mut disk = UbuntuDiskConfig::new(FOCAL_IMAGE_NAME.to_owned());
+        let guest = Guest::new(&mut disk);
+
+        let domain_path = guest.create_domain(VcpuConfig::default(), DEFAULT_RAM_SIZE);
+
+        let r = std::panic::catch_unwind(|| {
+            spawn_virsh(&["create", domain_path.to_str().unwrap()])
+                .unwrap()
+                .wait_with_output()
+                .unwrap();
+
+            guest.wait_vm_boot(None).unwrap();
+            guest.ssh_command("sudo reboot").unwrap();
+            guest.wait_vm_boot(None).unwrap();
+            let reboot_count = guest
+                .ssh_command("sudo journalctl | grep -c -- \"-- Reboot --\"")
+                .unwrap()
+                .trim()
+                .parse::<u32>()
+                .unwrap_or_default();
+            assert_eq!(reboot_count, 1);
+
+            let list_output = spawn_virsh(&["list", "--all"])
+                .unwrap()
+                .wait_with_output()
+                .unwrap();
+
+            let re = Regex::new(&format!(r"\s+\d+\s+{}\s+running", guest.vm_name)).unwrap();
+            assert!(re.is_match(std::str::from_utf8(&list_output.stdout).unwrap().trim()));
+        });
+
+        spawn_virsh(&["destroy", &guest.vm_name])
+            .unwrap()
+            .wait()
+            .unwrap();
+
+        libvirtd.kill().unwrap();
+        let libvirtd_output = libvirtd.wait_with_output().unwrap();
+
+        eprintln!(
+            "libvirtd stdout\n\n{}\n\nlibvirtd stderr\n\n{}",
+            std::str::from_utf8(&libvirtd_output.stdout).unwrap(),
+            std::str::from_utf8(&libvirtd_output.stderr).unwrap()
+        );
+
+        assert!(r.is_ok());
+    }
 }
