@@ -350,6 +350,46 @@ mod tests {
     }
 
     #[test]
+    fn test_libvirt_restart() {
+        cleanup_libvirt_state();
+        let mut libvirtd = spawn_libvirtd().unwrap();
+        thread::sleep(std::time::Duration::new(5, 0));
+
+        let mut disk = UbuntuDiskConfig::new(FOCAL_IMAGE_NAME.to_owned());
+        let guest = Guest::new(&mut disk);
+        let domain_path = guest.create_domain(VcpuConfig::default(), DEFAULT_RAM_SIZE);
+
+        spawn_virsh(&["create", domain_path.to_str().unwrap()])
+            .unwrap()
+            .wait()
+            .unwrap();
+
+        guest.wait_vm_boot(None).unwrap();
+        libvirtd.kill().unwrap();
+        let mut libvirtd = spawn_libvirtd().unwrap();
+        thread::sleep(std::time::Duration::new(5, 0));
+
+        let destroy_output = spawn_virsh(&["destroy", &guest.vm_name])
+            .unwrap()
+            .wait_with_output()
+            .unwrap();
+
+        libvirtd.kill().unwrap();
+        let libvirtd_output = libvirtd.wait_with_output().unwrap();
+
+        eprintln!(
+            "libvirtd stdout\n\n{}\n\nlibvirtd stderr\n\n{}",
+            std::str::from_utf8(&libvirtd_output.stdout).unwrap(),
+            std::str::from_utf8(&libvirtd_output.stderr).unwrap()
+        );
+
+        assert!(std::str::from_utf8(&destroy_output.stdout)
+            .unwrap()
+            .trim()
+            .starts_with(&format!("Domain {} destroyed", guest.vm_name)));
+    }
+
+    #[test]
     fn test_huge_memory() {
         cleanup_libvirt_state();
         let mut libvirtd = spawn_libvirtd().unwrap();
