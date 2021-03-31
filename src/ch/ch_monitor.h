@@ -22,6 +22,7 @@
 
 #include <curl/curl.h>
 
+#include "ch_conf.h"
 #include "virobject.h"
 #include "virjson.h"
 #include "domain_conf.h"
