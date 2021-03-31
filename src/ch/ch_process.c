@@ -53,7 +53,6 @@ static virCHMonitorPtr virCHProcessConnectMonitor(virCHDriverPtr driver,
                                                   virDomainObjPtr vm)
 {
     virCHMonitorPtr monitor = NULL;
-    g_autoptr(virCHDriverConfig) cfg = virCHDriverGetConfig(driver);
 
     monitor = virCHMonitorNew(vm, driver);
 
