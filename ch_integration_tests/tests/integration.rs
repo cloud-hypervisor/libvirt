@@ -512,6 +512,60 @@ mod tests {
     }
 
     #[test]
+    fn test_track_vm_killed_state() {
+        cleanup_libvirt_state();
+        let mut libvirtd = spawn_libvirtd().unwrap();
+        thread::sleep(std::time::Duration::new(5, 0));
+
+        let mut disk = UbuntuDiskConfig::new(FOCAL_IMAGE_NAME.to_owned());
+        let guest = Guest::new(&mut disk);
+
+        let domain_path = guest.create_domain(VcpuConfig::default(), DEFAULT_RAM_SIZE);
+
+        let r = std::panic::catch_unwind(|| {
+            spawn_virsh(&["create", domain_path.to_str().unwrap()])
+                .unwrap()
+                .wait_with_output()
+                .unwrap();
+
+            guest.wait_vm_boot(None).unwrap();
+
+            let pid = std::fs::read_to_string(format!("/var/run/libvirt/ch/{}.pid", guest.vm_name))
+                .unwrap()
+                .parse::<libc::pid_t>()
+                .unwrap();
+            unsafe {
+                libc::kill(pid, libc::SIGKILL);
+            }
+            thread::sleep(std::time::Duration::new(2, 0));
+
+            let list_output = spawn_virsh(&["list", "--all"])
+                .unwrap()
+                .wait_with_output()
+                .unwrap();
+
+            let re = Regex::new(&format!(r"\s+-\s+{}\s+shut off", guest.vm_name)).unwrap();
+            assert!(re.is_match(std::str::from_utf8(&list_output.stdout).unwrap().trim()));
+        });
+
+        spawn_virsh(&["destroy", &guest.vm_name])
+            .unwrap()
+            .wait()
+            .unwrap();
+
+        libvirtd.kill().unwrap();
+        let libvirtd_output = libvirtd.wait_with_output().unwrap();
+
+        eprintln!(
+            "libvirtd stdout\n\n{}\n\nlibvirtd stderr\n\n{}",
+            std::str::from_utf8(&libvirtd_output.stdout).unwrap(),
+            std::str::from_utf8(&libvirtd_output.stderr).unwrap()
+        );
+
+        assert!(r.is_ok());
+    }
+
+    #[test]
     fn test_uri() {
         cleanup_libvirt_state();
         let mut libvirtd = spawn_libvirtd().unwrap();
