@@ -12,6 +12,8 @@
 Libvirt API for virtualization
 ==============================
 
+TEST
+
 Libvirt provides a portable, long term stable C API for managing the
 virtualization technologies provided by many operating systems. It
 includes support for QEMU, KVM, Xen, LXC, bhyve, Virtuozzo, VMware
