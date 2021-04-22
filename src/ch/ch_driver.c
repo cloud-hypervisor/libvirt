@@ -254,7 +254,6 @@ chDomainCreateXML(virConnectPtr conn,
         goto cleanup;
 
     vmdef = NULL;
-    vm->persistent = 1;
 
     if (virCHDomainObjBeginJob(vm, CH_JOB_MODIFY) < 0)
         goto cleanup;
