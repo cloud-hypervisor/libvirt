@@ -589,10 +589,11 @@ chProcessNetworkPrepareDevices(virCHDriverPtr driver, virDomainObjPtr vm)
         } else if (actualType == VIR_DOMAIN_NET_TYPE_USER ) {
             virReportError(VIR_ERR_INTERNAL_ERROR,
               _("VIR_DOMAIN_NET_TYPE_USER is not a supported Network type"));
-         } else if (actualType == VIR_DOMAIN_NET_TYPE_NETWORK ) {
+        } else if (actualType == VIR_DOMAIN_NET_TYPE_NETWORK) {
             tapfdSize = net->driver.virtio.queues;
             if (!tapfdSize)
                 tapfdSize = 1;
+            VIR_ERROR("tapfd: %lu", tapfdSize);
 
             tapfd = g_new(int, tapfdSize);
 
@@ -606,7 +607,24 @@ chProcessNetworkPrepareDevices(virCHDriverPtr driver, virDomainObjPtr vm)
             // This info will be used while generating Network Json
             priv->tapfd = g_steal_pointer(&tapfd);
             priv->tapfdSize = tapfdSize;
-         }
+        } else if (actualType == VIR_DOMAIN_NET_TYPE_ETHERNET) {
+            tapfdSize = net->driver.virtio.queues;
+            if (!tapfdSize)
+                tapfdSize = 1;
+
+            tapfd = g_new(int, tapfdSize);
+
+            memset(tapfd, -1, tapfdSize * sizeof(tapfd[0]));
+
+            if (chInterfaceEthernetConnect(def, driver, net,
+                                           tapfd, tapfdSize) < 0)
+                goto cleanup;
+
+            // Store tap information in Private Data
+            // This info will be used while generating Network Json
+            priv->tapfd = g_steal_pointer(&tapfd);
+            priv->tapfdSize = tapfdSize;
+        }
     }
 
     return 0;
