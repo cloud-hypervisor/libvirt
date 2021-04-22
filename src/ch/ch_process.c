@@ -629,9 +629,9 @@ chProcessNetworkPrepareDevices(virCHDriverPtr driver, virDomainObjPtr vm)
 
     return 0;
 
-    cleanup:
-        g_free(tapfd);
-    return 0;
+ cleanup:
+    g_free(tapfd);
+    return -1;
 }
 
 
