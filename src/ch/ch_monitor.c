@@ -725,8 +725,10 @@ static inline int virCHMonitorShutdownVm(virDomainObjPtr vm,
          return -1;
 
      virCHProcessStop(driver, vm, reason);
-     if (virDomainObjSave(vm, driver->xmlopt, cfg->stateDir))
-        VIR_WARN("Failed to persist the domain after shutdown!");
+     if (vm->persistent) {
+       if (virDomainObjSave(vm, driver->xmlopt, cfg->stateDir))
+         VIR_WARN("Failed to persist the domain after shutdown!");
+     }
      virCHDomainObjEndJob(vm);
 
      return 0;
