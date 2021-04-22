@@ -254,3 +254,78 @@ chInterfaceBridgeConnect(virDomainDefPtr def,
 
     return ret;
 }
+
+/**
+ * chInterfaceStartDevice:
+ * @net: net device to start
+ *
+ * Based upon the type of device provided, perform the appropriate
+ * work to completely activate the device and make it reachable from
+ * the rest of the network.
+ */
+static int
+chInterfaceStartDevice(virDomainNetDefPtr net)
+{
+    virDomainNetType actualType = virDomainNetGetActualType(net);
+
+    switch (actualType) {
+    case VIR_DOMAIN_NET_TYPE_BRIDGE:
+    case VIR_DOMAIN_NET_TYPE_NETWORK:
+        if (virDomainNetGetActualBridgeMACTableManager(net)
+            == VIR_NETWORK_BRIDGE_MAC_TABLE_MANAGER_LIBVIRT) {
+            /* libvirt is managing the FDB of the bridge this device
+             * is attaching to, so we have turned off learning and
+             * unicast_flood on the device to prevent the kernel from
+             * adding any FDB entries for it. This means we need to
+             * add an fdb entry ourselves, using the MAC address from
+             * the interface config.
+             */
+            if (virNetDevBridgeFDBAdd(&net->mac, net->ifname,
+                                      VIR_NETDEVBRIDGE_FDB_FLAG_MASTER |
+                                      VIR_NETDEVBRIDGE_FDB_FLAG_TEMP) < 0)
+                return -1;
+        }
+        break;
+
+    case VIR_DOMAIN_NET_TYPE_DIRECT:
+        break;
+
+    case VIR_DOMAIN_NET_TYPE_ETHERNET:
+        if (virNetDevIPInfoAddToDev(net->ifname, &net->hostIP) < 0)
+            return -1;
+
+        break;
+
+    case VIR_DOMAIN_NET_TYPE_USER:
+    case VIR_DOMAIN_NET_TYPE_VHOSTUSER:
+    case VIR_DOMAIN_NET_TYPE_SERVER:
+    case VIR_DOMAIN_NET_TYPE_CLIENT:
+    case VIR_DOMAIN_NET_TYPE_MCAST:
+    case VIR_DOMAIN_NET_TYPE_UDP:
+    case VIR_DOMAIN_NET_TYPE_INTERNAL:
+    case VIR_DOMAIN_NET_TYPE_HOSTDEV:
+    case VIR_DOMAIN_NET_TYPE_LAST:
+        /* these types all require no action */
+        break;
+    }
+
+    return 0;
+}
+
+/**
+ * chInterfaceStartDevices:
+ * @def: domain definition
+ *
+ * Set all ifaces associated with this domain to the online state.
+ */
+int
+chInterfaceStartDevices(virDomainDefPtr def)
+{
+    size_t i;
+
+    for (i = 0; i < def->nnets; i++) {
+        if (chInterfaceStartDevice(def->nets[i]) < 0)
+            return -1;
+    }
+    return 0;
+}

@@ -663,6 +663,10 @@ int virCHProcessStart(virCHDriverPtr driver,
     if (chProcessNetworkPrepareDevices(driver, vm) < 0)
         goto cleanup;
 
+    /* Bring up netdevs before starting CPUs */
+    if (chInterfaceStartDevices(vm->def) < 0)
+       return -1;
+
     VIR_DEBUG("Preparing host devices");
     if (chHostdevPrepareDomainDevices(driver, vm->def,
                                       VIR_HOSTDEV_COLD_BOOT) < 0)

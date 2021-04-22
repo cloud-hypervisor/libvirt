@@ -13,3 +13,5 @@ int chInterfaceBridgeConnect(virDomainDefPtr def,
                            virDomainNetDefPtr net,
                            int *tapfd,
                            size_t *tapfdSize);
+
+int chInterfaceStartDevices(virDomainDefPtr def);
