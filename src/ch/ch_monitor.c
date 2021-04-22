@@ -405,7 +405,7 @@ virCHMonitorBuildNetJson(virDomainObjPtr vm, virJSONValuePtr nets, virDomainNetD
                 goto cleanup;
         }
     }
-    if (netdef->driver.virtio.queues) {
+    if (priv->tapfdSize) {
         if (virJSONValueObjectAppendNumberInt(net, "num_queues", 2 * priv->tapfdSize) < 0)
             goto cleanup;
     }
