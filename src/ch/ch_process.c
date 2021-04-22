@@ -592,8 +592,7 @@ chProcessNetworkPrepareDevices(virCHDriverPtr driver, virDomainObjPtr vm)
          } else if (actualType == VIR_DOMAIN_NET_TYPE_NETWORK ) {
             tapfdSize = net->driver.virtio.queues;
             if (!tapfdSize)
-                tapfdSize = 2; //This needs to be at least 2, based on
-                // https://github.com/cloud-hypervisor/cloud-hypervisor/blob/master/docs/networking.md
+                tapfdSize = 1;
 
             tapfd = g_new(int, tapfdSize);
 
