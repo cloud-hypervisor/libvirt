@@ -41,7 +41,7 @@ pipeline{
 					}
 					stage ('Install dependencies') {
 						steps {
-							sh "sudo apt update && sudo apt install -y meson ninja-build gcc libxml2-utils xsltproc python3-docutils libglib2.0-dev libgnutls28-dev libxml2-dev libnl-3-dev libnl-route-3-dev libyajl-dev make libcurl4-gnutls-dev qemu-utils libssl-dev mtools libudev-dev libpciaccess-dev flex bison libelf-dev"
+							sh "sudo apt update && sudo apt install -y meson ninja-build gcc libxml2-utils xsltproc python3-docutils libglib2.0-dev libgnutls28-dev libxml2-dev libnl-3-dev libnl-route-3-dev libyajl-dev make libcurl4-gnutls-dev qemu-utils libssl-dev mtools libudev-dev libpciaccess-dev flex bison libelf-dev bridge-utils procps"
 						}
 					}
 					stage ('Configure') {
@@ -71,8 +71,10 @@ pipeline{
                                                 steps {
                                                         sh "sudo brctl addbr mybr0"
                                                         sh "sudo ip link set mybr0 up"
-                                                        sh "brctl addif mybr0 eth0"
-							sh "sysctl -w net.ipv4.ip_forward=1"
+							sh "sudo sysctl -w net.ipv4.ip_forward=1"
+                                                        sh "sudo brctl addif mybr0 eth0"
+                                                        sh "sudo sudo ifconfig eth0 0"
+                                                        sh "sudo dhclient mybr0"
                                                 }
 
 					stage ('Run integration tests') {

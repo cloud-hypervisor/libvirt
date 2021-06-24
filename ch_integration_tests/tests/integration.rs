@@ -737,7 +737,6 @@ mod tests {
         thread::sleep(std::time::Duration::new(5, 0));
 
         for  i in 0..2 {
-
             let mut disk = UbuntuDiskConfig::new(FOCAL_IMAGE_NAME.to_owned());
             let guest = Guest::new(&mut disk, KernelType::RustFw);
             let domain_path = guest.create_domain(VcpuConfig ::default(), DEFAULT_RAM_SIZE);
@@ -764,7 +763,7 @@ mod tests {
             assert!(r.is_ok());
 
             guest_ip[i]  = guest
-                    .ssh_command("ip addr show ens4 | awk '$1 == \"inet\" {gsub(/\\/.*$/, \"\", $2); print $2}'")
+                    .ssh_command("ip route get 8.8.8.8 | sed -n '/src/{s/.*src *\\([^ ]*\\).*/\\1/p;q}'")
                     .unwrap()
                     .trim_end()
                     .to_string();
