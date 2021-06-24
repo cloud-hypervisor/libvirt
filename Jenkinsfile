@@ -67,6 +67,14 @@ pipeline{
 							sh "ch_integration_tests/build_ch.sh"
 						}
 					}
+					stage ('Bridge Install') {
+                                                steps {
+                                                        sh "sudo brctl addbr mybr0"
+                                                        sh "sudo ip link set mybr0 up"
+                                                        sh "brctl addif mybr0 eth0"
+							sh "sysctl -w net.ipv4.ip_forward=1"
+                                                }
+
 					stage ('Run integration tests') {
 						steps {
 							sh "ch_integration_tests/run_tests.sh"

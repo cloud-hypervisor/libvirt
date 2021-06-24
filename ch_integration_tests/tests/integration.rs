@@ -718,4 +718,89 @@ mod tests {
 
         assert!(r.is_ok());
     }
+    #[test]
+    fn test_bridge_networking(){
+        use std::fs;
+        use std::io::Write;
+        use std::process::Command;
+        cleanup_libvirt_state();
+
+        //configure host IP  since we cant do it from XML for bridge network.
+        command::new("sh")
+                .args("sudo ip addr add 192.168.1.1/24 dev mybr0 ; sudo ip addr add 192.168.2.1/24 dev mybr0")
+                .expect("Failed to set IP address.")
+       
+        let mut guest_name:  [String; 2] =  ["guest1".to_string() , "guest2".to_string()];
+        let mut guest_ip:  [String; 2] =  ["ip1".to_string() , "ip2".to_string()];
+
+        let mut libvirtd = spawn_libvirtd().unwrap();
+        thread::sleep(std::time::Duration::new(5, 0));
+
+        for  i in 0..2 {
+
+            let mut disk = UbuntuDiskConfig::new(FOCAL_IMAGE_NAME.to_owned());
+            let guest = Guest::new(&mut disk, KernelType::RustFw);
+            let domain_path = guest.create_domain(VcpuConfig ::default(), DEFAULT_RAM_SIZE);
+
+            let mut contents = fs::read_to_string(&domain_path)
+                            .expect("Something went wrong reading the file");
+            contents = contents.replace("ethernet", "bridge");
+            contents = contents.replace("</source>", "");
+            contents = contents.replace("source><ip ", "source bridge=\"mybr0\" ");
+
+            let mut f = std::fs::File::create(&domain_path).unwrap();
+            f.write_all(contents.as_bytes()).unwrap();
+
+            let r = std::panic::catch_unwind(|| {
+                spawn_virsh(&["create", domain_path.to_str().unwrap()])
+                    .unwrap()
+                    .wait()
+                    .unwrap();
+                 guest.wait_vm_boot(None).unwrap();
+            });
+
+            let guestname = &guest.vm_name;
+            guest_name[i] = guestname.to_string();
+            assert!(r.is_ok());
+
+            guest_ip[i]  = guest
+                    .ssh_command("ip addr show ens4 | awk '$1 == \"inet\" {gsub(/\\/.*$/, \"\", $2); print $2}'")
+                    .unwrap()
+                    .trim_end()
+                    .to_string();
+
+            if i >  0 {
+            let cmd = format!("ping -q -c1 -w 1 {}  > /dev/null ; echo $?", &guest_ip[i-1]);
+            println!("cmd is {:?}" , cmd);
+            let ssh =  guest
+                       .ssh_command(&cmd)
+                       .unwrap()
+                       .trim_end()
+                       .to_string();
+
+            assert!(ssh == "0");
+            println!(" ssh out is : {:?}" , ssh);
+
+            }
+        }
+
+        for i in 0..2 {
+            spawn_virsh(&["destroy", &guest_name[i]])
+                .unwrap()
+                .wait()
+                .unwrap();
+          }
+        libvirtd.kill().unwrap();
+        let libvirtd_output = libvirtd.wait_with_output().unwrap();
+        //Cleanup bridge configuration
+        command::new("sh")
+                .args("sudo ip addr del 192.168.1.1/24 dev mybr0 ; sudo ip addr del 192.168.2.1/24 dev mybr0")
+                .expect("Failed to clean IP address.")
+        eprintln!(
+            "libvirtd stdout\n\n{}\n\nlibvirtd stderr\n\n{}",
+            std::str::from_utf8(&libvirtd_output.stdout).unwrap(),
+            std::str::from_utf8(&libvirtd_output.stderr).unwrap()
+        );
+    }
+
 }
