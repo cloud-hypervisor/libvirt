@@ -71,7 +71,7 @@ pipeline{
                                                 steps {
                                                         sh "sudo brctl addbr mybr0"
                                                         sh "sudo ip link set mybr0 up"
-							sh "sudo sysctl -w net.ipv4.ip_forward=1"
+                                                        sh "sudo sysctl -w net.ipv4.ip_forward=1"
                                                         sh "sudo brctl addif mybr0 eth0"
                                                         sh "sudo sudo ifconfig eth0 0"
                                                         sh "sudo dhclient mybr0"
