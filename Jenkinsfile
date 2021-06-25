@@ -76,6 +76,7 @@ pipeline{
                                                         sh "sudo sudo ifconfig eth0 0"
                                                         sh "sudo dhclient mybr0"
                                                 }
+                                        }
 
 					stage ('Run integration tests') {
 						steps {
