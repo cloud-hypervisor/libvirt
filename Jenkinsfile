@@ -23,6 +23,9 @@ pipeline{
 			}
 			stage ('Worker build') {
 				agent { node { label 'groovy-libvirt' } }
+				environment {
+        					AZURE_CONNECTION_STRING = credentials('46b4e7d6-315f-4cc1-8333-b58780863b9b')
+				}
 				stages {
 					stage ('Checkout') {
 						steps {
@@ -33,11 +36,7 @@ pipeline{
 						steps {
 							sh "sudo apt install -y azure-cli"
 							sh "mkdir -p ${env.HOME}/workloads"
-							azureDownload(storageCredentialId: 'ch-image-store',
-										  containerName: 'private-images',
-										  includeFilesPattern: 'OVMF-4b47d0c6c8.fd',
-										  downloadType: 'container',
-										  downloadDirLoc: "${env.HOME}/workloads")
+							sh 'az storage blob download --container-name private-images --file "$HOME/workloads/OVMF-4b47d0c6c8.fd" --name OVMF-4b47d0c6c8.fd --connection-string "$AZURE_CONNECTION_STRING"'
 						}
 					}
 					stage ('Install dependencies') {
