@@ -161,48 +161,35 @@ virCHMonitorBuildPTYJson(virJSONValuePtr content, virDomainDefPtr vmdef)
     return -1;
 }
 
-
 static int
-virCHMonitorBuildKernelJson(virJSONValuePtr content, virDomainDefPtr vmdef)
+virCHMonitorBuildPayloadJson(virJSONValuePtr content, virDomainDefPtr vmdef)
 {
-    virJSONValuePtr kernel;
+    virJSONValuePtr payload;
 
     if (vmdef->os.kernel == NULL) {
         virReportError(VIR_ERR_INTERNAL_ERROR, "%s",
                        _("Kernel image path in this domain is not defined"));
         return -1;
-    } else {
-        kernel = virJSONValueNewObject();
-        if (virJSONValueObjectAppendString(kernel, "path", vmdef->os.kernel) < 0)
-            goto cleanup;
-        if (virJSONValueObjectAppend(content, "kernel", kernel) < 0)
-            goto cleanup;
     }
 
-    return 0;
-
- cleanup:
-    virJSONValueFree(kernel);
-    return -1;
-}
-
-static int
-virCHMonitorBuildCmdlineJson(virJSONValuePtr content, virDomainDefPtr vmdef)
-{
-    virJSONValuePtr cmdline;
-
-    cmdline = virJSONValueNewObject();
+    payload = virJSONValueNewObject();
+    if (virJSONValueObjectAppendString(payload, "kernel", vmdef->os.kernel) < 0)
+        goto cleanup;
     if (vmdef->os.cmdline) {
-        if (virJSONValueObjectAppendString(cmdline, "args", vmdef->os.cmdline) < 0)
-            goto cleanup;
-        if (virJSONValueObjectAppend(content, "cmdline", cmdline) < 0)
+        if (virJSONValueObjectAppendString(payload, "cmdline", vmdef->os.cmdline) < 0)
             goto cleanup;
     }
+    if (vmdef->os.initrd != NULL) {
+        if (virJSONValueObjectAppendString(payload, "initramfs", vmdef->os.initrd) < 0)
+            goto cleanup;
+    }
+    if (virJSONValueObjectAppend(content, "payload", payload) < 0)
+        goto cleanup;
 
     return 0;
 
  cleanup:
-    virJSONValueFree(cmdline);
+    virJSONValueFree(payload);
     return -1;
 }
 
@@ -224,26 +211,6 @@ virCHMonitorBuildMemoryJson(virJSONValuePtr content, virDomainDefPtr vmdef)
 
  cleanup:
     virJSONValueFree(memory);
-    return -1;
-}
-
-static int
-virCHMonitorBuildInitramfsJson(virJSONValuePtr content, virDomainDefPtr vmdef)
-{
-    virJSONValuePtr initramfs;
-
-    if (vmdef->os.initrd != NULL) {
-        initramfs = virJSONValueNewObject();
-        if (virJSONValueObjectAppendString(initramfs, "path", vmdef->os.initrd) < 0)
-            goto cleanup;
-        if (virJSONValueObjectAppend(content, "initramfs", initramfs) < 0)
-            goto cleanup;
-    }
-
-    return 0;
-
- cleanup:
-    virJSONValueFree(initramfs);
     return -1;
 }
 
@@ -546,13 +513,7 @@ virCHMonitorBuildVMJson(virDomainObjPtr vm, virDomainDefPtr vmdef, char **jsonst
     if (virCHMonitorBuildMemoryJson(content, vmdef) < 0)
         goto cleanup;
 
-    if (virCHMonitorBuildKernelJson(content, vmdef) < 0)
-        goto cleanup;
-
-    if (virCHMonitorBuildCmdlineJson(content, vmdef) < 0)
-        goto cleanup;
-
-    if (virCHMonitorBuildInitramfsJson(content, vmdef) < 0)
+    if (virCHMonitorBuildPayloadJson(content, vmdef) < 0)
         goto cleanup;
 
     if (virCHMonitorBuildDisksJson(content, vmdef) < 0)
