@@ -22,7 +22,7 @@ pipeline{
 				}
 			}
 			stage ('Worker build') {
-				agent { node { label 'groovy-libvirt' } }
+				agent { node { label 'jammy-libvirt' } }
 				environment {
 						AZURE_CONNECTION_STRING = credentials('46b4e7d6-315f-4cc1-8333-b58780863b9b')
 				}
