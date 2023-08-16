@@ -171,6 +171,64 @@ virCHDriverConfigDispose(void *obj)
     g_free(cfg->logDir);
 }
 
+int
+virCHVersionString(const char *str, unsigned long *version)
+{
+    unsigned int major, minor = 0, micro = 0;
+
+    /**
+     * Remove the from "cloud-hypervisor " to last "/" if present any from version output
+     * Below snippet will give something line v<>.<>.(any dirty data if any)
+     * 
+     * upstream CLH release version : cloud-hypervisor v32.0.0
+     * upstream CLH main branch build : cloud-hypervisor v33.0-104-ge0e3779e-dirty
+     * msft CLH main branch build : cloud-hypervisor msft/v32.0.131-1-ga5d6db5c-dirty
+    */
+    char *clh_string = "cloud-hypervisor ";
+    char *last_slash = strrchr(str, '/');
+    char *clh_string_start = strstr(str, clh_string);
+    char *version_string = "";
+
+    if (clh_string_start == NULL){
+        VIR_ERROR("No matching format found: %s\n", str);
+        return -1;
+    }
+
+    /* If "/" is present in the input version string*/
+    if (last_slash != NULL) {
+        if (clh_string_start > last_slash) {
+            /* -- Return -1 if "/" index is lower than "cloud-hypervisor " */
+            VIR_ERROR("Invalid format found: %s\n", str);
+            return -1;
+        } else {
+            version_string = last_slash + 1;
+        }
+    } else {
+        /* If "/" is not present in input version string, remove "cloud-hypervisor " from beginning*/
+        version_string = str + strlen(clh_string);
+    }
+
+    /* Try to get major, minor, micro version*/
+    VIR_DEBUG("version string after trim down: %s\n", version_string);
+    if(sscanf(version_string, "v%d.%d.%d", &major, &minor, &micro) != 3){
+        /* Try to get major, minor version*/
+        if(sscanf(version_string, "v%d.%d", &major, &minor) != 2){
+            VIR_ERROR("Can not extract CLH version: %s\n", version_string);
+            return -1;
+        }
+    }
+
+    // Print the extracted version numbers
+    VIR_DEBUG("Major: %d\n", major);
+    VIR_DEBUG("Minor: %d\n", minor);
+    VIR_DEBUG("Micro: %d\n", micro);
+
+    *version = 1000000 * major + 1000 * minor + micro;
+
+    return 0;
+
+}
+
 static int
 chExtractVersionInfo(int *retversion)
 {
@@ -191,11 +249,7 @@ chExtractVersionInfo(int *retversion)
 
     tmp = help;
 
-    /* expected format: cloud-hypervisor v<major>.<minor>.<micro> */
-    if ((tmp = STRSKIP(tmp, "cloud-hypervisor v")) == NULL)
-        goto cleanup;
-
-    if (virParseVersionString(tmp, &version, true) < 0)
+    if (virCHVersionString(tmp, &version) < 0)
         goto cleanup;
 
     // v0.9.0 is the minimum supported version
