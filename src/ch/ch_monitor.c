@@ -109,6 +109,31 @@ virCHMonitorBuildCPUJson(virJSONValuePtr content, virDomainDefPtr vmdef)
 }
 
 static int
+virCHMonitorBuildPlatformJson(virJSONValuePtr content, virDomainDefPtr vmdef)
+{
+    virJSONValuePtr platform;
+
+    if (
+        vmdef->sev &&
+        (virDomainLaunchSecurity) vmdef->sev->sectype == VIR_DOMAIN_LAUNCH_SECURITY_SEV
+    ) {
+        platform = virJSONValueNewObject();
+
+        if (virJSONValueObjectAppendBoolean(platform, "snp", 1) < 0)
+            goto cleanup;
+
+        if (virJSONValueObjectAppend(content, "platform", platform) < 0)
+            goto cleanup;
+    }
+
+    return 0;
+
+ cleanup:
+    virJSONValueFree(platform);
+    return -1;
+}
+
+static int
 virCHMonitorBuildPTYJson(virJSONValuePtr content, virDomainDefPtr vmdef)
 {
     virJSONValuePtr ptyc = virJSONValueNewObject();
@@ -166,24 +191,74 @@ static int
 virCHMonitorBuildPayloadJson(virJSONValuePtr content, virDomainDefPtr vmdef)
 {
     virJSONValuePtr payload;
-
-    if (vmdef->os.kernel == NULL) {
-        virReportError(VIR_ERR_INTERNAL_ERROR, "%s",
-                       _("Kernel image path in this domain is not defined"));
-        return -1;
-    }
-
     payload = virJSONValueNewObject();
-    if (virJSONValueObjectAppendString(payload, "kernel", vmdef->os.kernel) < 0)
-        goto cleanup;
-    if (vmdef->os.cmdline) {
-        if (virJSONValueObjectAppendString(payload, "cmdline", vmdef->os.cmdline) < 0)
+
+    if (
+        vmdef->sev &&
+        (virDomainLaunchSecurity) vmdef->sev->sectype == VIR_DOMAIN_LAUNCH_SECURITY_SEV) {
+        /*
+            CVM payload snippet
+            Set cbits, reducedPhysBits, policy as default 0
+            host_data is optional to be passed
+
+            <os>
+		        <type>hvm</type>
+		        <kernel>IGVM file path</kernel>
+            </os>
+            <launchSecurity type='sev'>
+                <cbitpos>0</cbitpos>
+                <reducedPhysBits>0</reducedPhysBits>
+                <policy>0x0000</policy>
+                <host_data>243eb7dc1a21129caa91dcbb794922b933baecb5823a377eb431188673288c07</host_data>
+            </launchSecurity>
+        */
+        if (vmdef->os.kernel == NULL) {
+            virReportError(
+                VIR_ERR_INTERNAL_ERROR,
+                "%s",
+                _("IGVM image path in this domain is not defined. Please pass IGVM filepath while passing 'snp=on'")
+            );
             goto cleanup;
-    }
-    if (vmdef->os.initrd != NULL) {
-        if (virJSONValueObjectAppendString(payload, "initramfs", vmdef->os.initrd) < 0)
+        } else {
+            if (virJSONValueObjectAppendString(payload, "igvm", vmdef->os.kernel) < 0)
+                goto cleanup;
+        }
+
+        if (vmdef->sev->host_data) {
+            if (virJSONValueObjectAppendString(payload, "host_data", vmdef->sev->host_data) < 0)
+                goto cleanup;
+        }
+    } else {
+        /*
+            NON-CVM payload snippet
+
+            <os>
+		        <type>hvm</type>
+		        <kernel>kernel file path</kernel>
+            </os>
+        */
+        if (vmdef->os.kernel == NULL) {
+            virReportError(
+                VIR_ERR_INTERNAL_ERROR,
+                "%s",
+                _("Kernel image path in this domain is not defined")
+            );
             goto cleanup;
+        } else {
+            if (virJSONValueObjectAppendString(payload, "kernel", vmdef->os.kernel) < 0)
+                goto cleanup;
+        }
+
+        if (vmdef->os.cmdline) {
+            if (virJSONValueObjectAppendString(payload, "cmdline", vmdef->os.cmdline) < 0)
+                goto cleanup;
+        }
+        if (vmdef->os.initrd) {
+            if (virJSONValueObjectAppendString(payload, "initramfs", vmdef->os.initrd) < 0)
+                goto cleanup;
+        }
     }
+
     if (virJSONValueObjectAppend(content, "payload", payload) < 0)
         goto cleanup;
 
@@ -487,6 +562,9 @@ virCHMonitorBuildVMJson(virDomainDefPtr vmdef, char **jsonstr)
         goto cleanup;
 
     if (virCHMonitorBuildPayloadJson(content, vmdef) < 0)
+        goto cleanup;
+
+    if (virCHMonitorBuildPlatformJson(content, vmdef) < 0)
         goto cleanup;
 
     if (virCHMonitorBuildDisksJson(content, vmdef) < 0)

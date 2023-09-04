@@ -16749,6 +16749,7 @@ virDomainSEVDefParseXML(xmlNodePtr sevNode,
     def->policy = policy;
     def->dh_cert = virXPathString("string(./dhCert)", ctxt);
     def->session = virXPathString("string(./session)", ctxt);
+    def->host_data = virXPathString("string(./host_data)", ctxt);
 
     return def;
 
@@ -28684,6 +28685,9 @@ virDomainSEVDefFormat(virBufferPtr buf, virDomainSEVDefPtr sev)
 
     if (sev->session)
         virBufferEscapeString(buf, "<session>%s</session>\n", sev->session);
+
+    if (sev->host_data)
+        virBufferEscapeString(buf, "<host_data>%s</host_data>\n", sev->host_data);
 
     virBufferAdjustIndent(buf, -2);
     virBufferAddLit(buf, "</launchSecurity>\n");

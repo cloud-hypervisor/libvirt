@@ -2460,6 +2460,7 @@ struct _virDomainSEVDef {
     unsigned int policy;
     unsigned int cbitpos;
     unsigned int reduced_phys_bits;
+    char *host_data;
 };
 
 
